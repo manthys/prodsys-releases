@@ -24,34 +24,30 @@ class PdfService {
     final boldFont = await PdfGoogleFonts.robotoBold();
     final theme = pw.ThemeData.withFont(base: font, bold: boldFont);
     
+    // ===== CORREÇÃO AQUI: USANDO pw.MultiPage =====
     pdf.addPage(
-      pw.Page(
+      pw.MultiPage(
         theme: theme,
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(32),
+        header: (pw.Context context) => _buildHeader(company, logoImage),
+        footer: (pw.Context context) => _buildPageFooter(context),
         build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              _buildHeader(company, logoImage),
-              pw.SizedBox(height: 10),
-              pw.Divider(color: PdfColors.grey400),
-              pw.SizedBox(height: 10),
-              _buildOrderTitle(order),
-              pw.SizedBox(height: 15),
-              _buildOrderDetailsSection(order),
-              pw.SizedBox(height: 10),
-              _buildPartyInfoSection(company, client),
-              pw.SizedBox(height: 10),
-              _buildDeliveryAddressSection(order),
-              pw.SizedBox(height: 15),
-              _buildItemsTable(order),
-              _buildTotals(order),
-              pw.Spacer(),
-              _buildFooterInfo(order, company),
-              _buildPageFooter(context),
-            ],
-          );
+          return [
+            _buildOrderTitle(order),
+            pw.SizedBox(height: 15),
+            _buildOrderDetailsSection(order),
+            pw.SizedBox(height: 10),
+            _buildPartyInfoSection(company, client),
+            pw.SizedBox(height: 10),
+            _buildDeliveryAddressSection(order),
+            pw.SizedBox(height: 15),
+            _buildItemsTable(order),
+            _buildTotals(order),
+            // pw.Spacer() não é necessário aqui, pois o MultiPage gerencia o espaço
+            pw.SizedBox(height: 30),
+            _buildFooterInfo(order, company),
+          ];
         },
       ),
     );
@@ -59,6 +55,7 @@ class PdfService {
     await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save());
   }
 
+  // O resto do arquivo continua exatamente o mesmo
   pw.Widget _buildHeader(CompanySettings company, pw.MemoryImage? logo) {
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -75,8 +72,9 @@ class PdfService {
               children: [
                 pw.Text(company.companyName, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 18)),
                 pw.Text(company.address.street, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
-                pw.Text(company.email ?? '', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
-                pw.Text('CNPJ: ${company.cnpj}', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+                pw.Text('${company.address.city} - ${company.address.state}, CEP: ${company.address.cep}', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+                pw.Text('CNPJ: ${company.cnpj} | Telefone: ${company.phone}', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+                pw.Text('Email: ${company.email}', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
               ],
             ),
           ]
@@ -222,12 +220,8 @@ class PdfService {
       final index = entry.key + 1;
       final item = entry.value;
       return [
-        index.toString(),
-        item.sku,
-        item.productName, // <-- CORREÇÃO AQUI
-        '${item.quantity} Unidades',
-        currencyFormatter.format(item.finalUnitPrice),
-        currencyFormatter.format(item.totalPrice)
+        index.toString(), item.sku, item.productName, '${item.quantity} Unidades',
+        currencyFormatter.format(item.finalUnitPrice), currencyFormatter.format(item.totalPrice)
       ];
     }).toList();
     

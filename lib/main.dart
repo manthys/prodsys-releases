@@ -8,11 +8,6 @@ import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
 import 'services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-
-// Imports para o atualizador
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:auto_updater/auto_updater.dart';
 
 void main() async {
@@ -57,71 +52,26 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> {
   final AuthService authService = AuthService();
-  late String _updateUrl;
 
   @override
   void initState() {
     super.initState();
+    // Inicia a verificação de atualização assim que o app começa
     _checkForUpdates();
   }
-
+  
   Future<void> _checkForUpdates() async {
+    // IMPORTANTE: Substitua com seu usuário e repositório do GitHub
     const String githubUser = 'manthys';
     const String repoName = 'prodsys-releases';
-    // A URL para o auto_updater deve apontar para o feed de releases
-    _updateUrl = 'https://github.com/$githubUser/$repoName/releases/latest/download/appcast.xml';
-
-    try {
-      final PackageInfo packageInfo = await PackageInfo.fromPlatform();
-      String currentVersion = packageInfo.version;
-
-      final response = await http.get(Uri.parse('https://api.github.com/repos/$githubUser/$repoName/releases/latest'));
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body);
-        final latestVersion = (json['tag_name'] as String).replaceAll('v', '');
-        
-        if (_isUpdateAvailable(currentVersion, latestVersion)) {
-          _showUpdateDialog(latestVersion);
-        }
-      }
-    } catch (e) {
-      print('Erro ao verificar atualização: $e');
-    }
+    
+    // ===== URL ATUALIZADA PARA APONTAR PARA O APPCAST.XML DA ÚLTIMA VERSÃO =====
+    final String feedURL = 'https://github.com/$githubUser/$repoName/releases/latest/download/appcast.xml';
+    
+    await autoUpdater.setFeedURL(feedURL);
+    await autoUpdater.checkForUpdates();
   }
   
-  bool _isUpdateAvailable(String currentVersion, String latestVersion) {
-    return currentVersion.compareTo(latestVersion) < 0;
-  }
-
-  void _showUpdateDialog(String newVersion) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Atualização Disponível!'),
-          content: Text('Uma nova versão ($newVersion) do ProdSys está disponível. O programa será fechado para ser atualizado.'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Depois'),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                // ===== CÓDIGO CORRIGIDO AQUI =====
-                await autoUpdater.setFeedURL(_updateUrl);
-                await autoUpdater.checkForUpdates(inBackground: false);
-                // O pacote cuidará de fechar e instalar
-              },
-              child: const Text('Atualizar e Reiniciar'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<User?>(

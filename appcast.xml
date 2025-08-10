@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+    <channel>
+        <title>ProdSys Releases</title>
+        <item>
+            <title>Versão 1.1.0</title>
+            <enclosure url="https://github.com/manthys/prodsys-releases/releases/download/v1.1.0/setup-prodsys-1.1.0.exe"
+                sparkle:version="1.1.0"
+                type="application/octet-stream" />
+        </item>
+    </channel>
+</rss>

@@ -25,29 +25,22 @@ class DeliveryPdfService {
     final boldFont = await PdfGoogleFonts.robotoBold();
     final theme = pw.ThemeData.withFont(base: font, bold: boldFont);
     
+    // ===== CORREÇÃO AQUI: USANDO pw.MultiPage =====
     pdf.addPage(
-      pw.Page(
+      pw.MultiPage(
         theme: theme,
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(32),
+        header: (pw.Context context) => _buildHeader(company, delivery, logoImage),
+        footer: (pw.Context context) => _buildPageFooter(context),
         build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              _buildHeader(company, logoImage),
-              pw.SizedBox(height: 10),
-              pw.Divider(color: PdfColors.grey400),
-              pw.SizedBox(height: 10),
-              _buildDeliveryTitle(delivery),
-              pw.SizedBox(height: 20),
-              _buildPartyInfoSection(client, order, delivery),
-              pw.SizedBox(height: 15),
-              _buildItemsTable(delivery),
-              pw.Spacer(),
-              _buildSignatureSection(),
-              _buildPageFooter(context),
-            ],
-          );
+          return [
+            _buildPartyInfoSection(client, order, delivery),
+            pw.SizedBox(height: 15),
+            _buildItemsTable(delivery),
+            pw.Spacer(),
+            _buildSignatureSection(),
+          ];
         },
       ),
     );
@@ -55,18 +48,16 @@ class DeliveryPdfService {
     await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save());
   }
 
-  // ===== CABEÇALHO CORRIGIDO E COMPLETO =====
-  pw.Widget _buildHeader(CompanySettings company, pw.MemoryImage? logo) {
+  // O resto do arquivo continua exatamente o mesmo da última versão correta.
+  pw.Widget _buildHeader(CompanySettings company, Delivery delivery, pw.MemoryImage? logo) {
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
         pw.Row(
           crossAxisAlignment: pw.CrossAxisAlignment.center,
           children: [
-            if (logo != null)
-              pw.Image(logo, height: 50, width: 50),
-            if (logo != null)
-              pw.SizedBox(width: 20),
+            if (logo != null) pw.Image(logo, height: 50, width: 50),
+            if (logo != null) pw.SizedBox(width: 20),
             pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
@@ -79,7 +70,13 @@ class DeliveryPdfService {
             ),
           ]
         ),
-        pw.Text('Página 1/1', style: const pw.TextStyle(fontSize: 9)),
+        pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.end,
+          children: [
+            pw.Text('NOTA DE ENTREGA', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
+            pw.Text('Data: ${DateFormat('dd/MM/yyyy').format(delivery.deliveryDate.toDate())}', style: const pw.TextStyle(fontSize: 9)),
+          ]
+        )
       ]
     );
   }
@@ -119,16 +116,6 @@ class DeliveryPdfService {
           ),
         ],
       ),
-    );
-  }
-
-  pw.Widget _buildDeliveryTitle(Delivery delivery) {
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        pw.Text('NOTA DE ENTREGA', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
-        pw.Text('Data: ${DateFormat('dd/MM/yyyy').format(delivery.deliveryDate.toDate())}', style: const pw.TextStyle(fontSize: 9)),
-      ]
     );
   }
 
