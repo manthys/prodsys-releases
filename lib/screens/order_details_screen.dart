@@ -7,11 +7,16 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../models/delivery_model.dart';
 import '../models/order_model.dart';
-import '../services/auth_service.dart'; // IMPORT ADICIONADO
+import '../models/stock_item_model.dart';
+import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/pdf_service.dart';
+import '../services/delivery_pdf_service.dart';
+import '../widgets/delivery_dialog.dart';
 import 'order_form_screen.dart';
+import 'delivery_history_screen.dart'; // <-- NOVO IMPORT
 
 class OrderDetailsScreen extends StatefulWidget {
   final Order order;
@@ -22,40 +27,18 @@ class OrderDetailsScreen extends StatefulWidget {
 
 class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   final FirestoreService _firestoreService = FirestoreService();
-  final AuthService _authService = AuthService(); // INSTÂNCIA DO AUTH SERVICE
-  final PdfService _pdfService = PdfService();
+  final AuthService _authService = AuthService();
+  final PdfService _orderPdfService = PdfService();
   late Order _currentOrder;
   bool _isGeneratingPdf = false;
   bool _isUploading = false;
 
+  // ... (initState, reloadOrder, showSnackBar, generateOrderPdf, e outras funções permanecem iguais)
   @override
   void initState() {
     super.initState();
     _currentOrder = widget.order;
   }
-  
-  // ... (a maior parte do arquivo continua igual) ...
-
-  // FUNÇÃO DE DUPLICAR ATUALIZADA
-  void _duplicateOrder() {
-    final currentUser = _authService.currentUser;
-    if (currentUser == null) {
-      _showSnackBar('Você precisa estar logado para duplicar um pedido.', isError: true);
-      return;
-    }
-    
-    // Usa o novo método para criar uma cópia limpa
-    final newQuote = _currentOrder.duplicateAsQuote(currentUser: currentUser);
-
-    // Navega para a tela de formulário, passando a nova cotação para edição
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (context) => OrderFormScreen(existingOrder: newQuote),
-      ),
-    );
-  }
-
-  // O resto do arquivo permanece o mesmo
   Future<void> _reloadOrder() async {
     final updatedOrder = await _firestoreService.getOrderById(_currentOrder.id!);
     if (updatedOrder != null && mounted) setState(() => _currentOrder = updatedOrder);
@@ -64,15 +47,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : Colors.green));
   }
-  void _generatePdf() async {
+  void _generateOrderPdf() async {
     setState(() => _isGeneratingPdf = true);
     try {
       final companySettings = await _firestoreService.getCompanySettings();
       final client = await _firestoreService.getClientById(_currentOrder.clientId);
-      if (client != null) await _pdfService.generateAndShowPdf(_currentOrder, client, companySettings);
+      if (client != null) await _orderPdfService.generateAndShowPdf(_currentOrder, client, companySettings);
       else _showSnackBar('Erro: Cliente não encontrado.', isError: true);
     } catch (e) {
-      _showSnackBar('Erro ao gerar PDF: $e', isError: true);
+      _showSnackBar('Erro ao gerar PDF do Pedido: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isGeneratingPdf = false);
     }
@@ -152,7 +135,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (confirmed != true) return;
     setState(() => _isUploading = true);
     try {
-      final Map<String, dynamic> dataToUpdate = {'amountPaid': _currentOrder.finalAmount, 'paymentStatus': PaymentStatus.pagoIntegralmente.name, 'status': OrderStatus.finalizado.name};
+      final Map<String, dynamic> dataToUpdate = {'amountPaid': _currentOrder.finalAmount, 'paymentStatus': PaymentStatus.pagoIntegralmente.name};
       await _firestoreService.updateOrderPayment(_currentOrder.id!, dataToUpdate);
       if (pickedFile != null && pickedFile!.path != null) {
         final file = File(pickedFile!.path!);
@@ -161,7 +144,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         final downloadUrl = await uploadTask.ref.getDownloadURL();
         await _firestoreService.addAttachmentUrlToOrder(_currentOrder.id!, downloadUrl);
       }
-      _showSnackBar("Pagamento final confirmado! Pedido finalizado.");
+      _showSnackBar("Pagamento final confirmado!");
       _reloadOrder();
     } catch (e) {
        _showSnackBar('Erro: $e', isError: true);
@@ -173,6 +156,60 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final result = await Navigator.of(context).push<Order>(MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: _currentOrder)));
     if (result != null && mounted) setState(() => _currentOrder = result);
   }
+  void _duplicateOrder() {
+    final currentUser = _authService.currentUser;
+    if (currentUser == null) {
+      _showSnackBar('Você precisa estar logado para duplicar um pedido.', isError: true);
+      return;
+    }
+    final newQuote = _currentOrder.duplicateAsQuote(currentUser: currentUser);
+    Navigator.of(context).push(MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: newQuote)));
+  }
+  void _showDeliveryDialog() async {
+    final allStockItems = await _firestoreService.getStockItemsStream().first;
+    final itemsReadyForDelivery = allStockItems.where((item) => item.orderId == _currentOrder.id && item.status == StockItemStatus.emEstoque).toList();
+    if (itemsReadyForDelivery.isEmpty) {
+      _showSnackBar('Não há itens em estoque prontos para entrega deste pedido.', isError: true);
+      return;
+    }
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => DeliveryDialog(order: _currentOrder, itemsReadyForDelivery: itemsReadyForDelivery),
+    );
+    if (result != null) {
+      setState(() => _isUploading = true);
+      try {
+        final driverName = result['driverName'] as String;
+        final vehiclePlate = result['vehiclePlate'] as String;
+        final selectedItems = result['selectedItems'] as List<DeliverySelectionItem>;
+        final currentUser = _authService.currentUser;
+        final deliveryItems = selectedItems.map((sel) => DeliveryItem(productId: sel.productId, sku: sel.sku, productName: sel.productName, quantity: sel.quantityToDeliver)).toList();
+        final newDelivery = Delivery(
+          orderId: _currentOrder.id!, clientName: _currentOrder.clientName, deliveryDate: Timestamp.now(),
+          items: deliveryItems, driverName: driverName, vehiclePlate: vehiclePlate,
+          createdByUserName: currentUser?.displayName ?? currentUser?.email ?? 'N/A',
+        );
+        List<StockItem> stockItemsToUpdate = [];
+        List<StockItem> availableItems = List.from(itemsReadyForDelivery);
+        for (var selItem in selectedItems) {
+          var itemsToFind = selItem.quantityToDeliver;
+          var foundItems = availableItems.where((stockItem) => stockItem.productId == selItem.productId).take(itemsToFind).toList();
+          stockItemsToUpdate.addAll(foundItems);
+          for (var found in foundItems) {
+            availableItems.remove(found);
+          }
+        }
+        await _firestoreService.createDeliveryAndUpdateStock(newDelivery, stockItemsToUpdate);
+        _showSnackBar('Entrega registrada com sucesso!');
+      } catch(e) {
+        _showSnackBar('Erro ao registrar entrega: $e', isError: true);
+      } finally {
+        if(mounted) setState(() => _isUploading = false);
+        _reloadOrder();
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bool canBeEdited = _currentOrder.status == OrderStatus.cotacao || _currentOrder.status == OrderStatus.pedido;
@@ -183,7 +220,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           IconButton(icon: const Icon(Icons.copy_all_outlined), tooltip: 'Duplicar Pedido', onPressed: _duplicateOrder),
           if (canBeEdited) IconButton(icon: const Icon(Icons.edit), tooltip: 'Editar Pedido', onPressed: _navigateToEditScreen),
           if (_isGeneratingPdf) const Padding(padding: EdgeInsets.all(16.0), child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white)))
-          else IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Gerar PDF', onPressed: _generatePdf),
+          else IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Gerar PDF do Pedido', onPressed: _generateOrderPdf),
           if (_currentOrder.status == OrderStatus.cotacao) IconButton(icon: const Icon(Icons.delete), tooltip: 'Excluir Cotação', onPressed: _confirmarExclusao),
           if (_currentOrder.status != OrderStatus.finalizado && _currentOrder.status != OrderStatus.cancelado) IconButton(icon: const Icon(Icons.cancel), tooltip: 'Cancelar Pedido', onPressed: _cancelarPedido),
           const SizedBox(width: 8),
@@ -196,17 +233,19 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       ])),
     );
   }
+  
+  // ... (buildClientInfoSection, buildItemsSection, buildTotalsSection, buildNotesSection, buildAttachmentsSection)
   Widget _buildClientInfoSection() {
     final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Cliente: ${_currentOrder.clientName}', style: Theme.of(context).textTheme.titleLarge), const SizedBox(height: 8), Text('Data: ${dateFormatter.format(_currentOrder.creationDate.toDate())}'), Text('Criado por: ${_currentOrder.createdByUserName}'), const SizedBox(height: 8), Row(children: [Text('Status: ', style: Theme.of(context).textTheme.bodyLarge), Chip(label: Text(_getStatusName(_currentOrder.status), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), backgroundColor: _getStatusColor(_currentOrder.status), padding: const EdgeInsets.symmetric(horizontal: 8))])]);
   }
   Widget _buildItemsSection() {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Itens:', style: Theme.of(context).textTheme.titleMedium), const Divider(), ..._currentOrder.items.map((item) => ListTile(contentPadding: EdgeInsets.zero, title: Text(item.productName), subtitle: Text('${item.quantity} x ${currencyFormatter.format(item.finalUnitPrice)}\nOpção de Logo: ${item.logoType}'), trailing: Text(currencyFormatter.format(item.totalPrice), style: const TextStyle(fontWeight: FontWeight.bold)), isThreeLine: true)).toList()]);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Itens do Pedido:', style: Theme.of(context).textTheme.titleMedium), const Divider(), ..._currentOrder.items.map((item) => ListTile(contentPadding: EdgeInsets.zero, title: Text(item.productName), subtitle: Text('${item.quantity} x ${currencyFormatter.format(item.finalUnitPrice)}\nSKU: ${item.sku}'), trailing: Text(currencyFormatter.format(item.totalPrice), style: const TextStyle(fontWeight: FontWeight.bold)), isThreeLine: true)).toList()]);
   }
   Widget _buildTotalsSection() {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    return Align(alignment: Alignment.centerRight, child: SizedBox(width: 280, child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal dos Itens:'), Text(currencyFormatter.format(_currentOrder.totalItemsAmount))]), const SizedBox(height: 4), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Frete:'), Text(currencyFormatter.format(_currentOrder.shippingCost))]), const Divider(), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('TOTAL:', style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold)), Text(currencyFormatter.format(_currentOrder.finalAmount), style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold))]), const SizedBox(height: 4), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('Valor Pago:', style: TextStyle(color: Colors.green.shade800)), Text(currencyFormatter.format(_currentOrder.amountPaid), style: TextStyle(color: Colors.green.shade800, fontWeight: FontWeight.bold))])])));
+    return Align(alignment: Alignment.centerRight, child: SizedBox(width: 280, child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Subtotal dos Itens:'), Text(currencyFormatter.format(_currentOrder.totalItemsAmount))]), const SizedBox(height: 4), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Frete:'), Text(currencyFormatter.format(_currentOrder.shippingCost))]), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text('Desconto:'), Text('- ${currencyFormatter.format(_currentOrder.discount)}', style: const TextStyle(color: Colors.red))]), const Divider(), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('TOTAL:', style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold)), Text(currencyFormatter.format(_currentOrder.finalAmount), style: Theme.of(context).textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold))]), const SizedBox(height: 4), Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text('Valor Pago:', style: TextStyle(color: Colors.green.shade800)), Text(currencyFormatter.format(_currentOrder.amountPaid), style: TextStyle(color: Colors.green.shade800, fontWeight: FontWeight.bold))])])));
   }
   Widget _buildNotesSection() {
     if (_currentOrder.notes == null || _currentOrder.notes!.isEmpty) return const SizedBox.shrink();
@@ -224,12 +263,37 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       });
     }).toList())), const SizedBox(height: 24)]);
   }
+  
+  // WIDGET DE BOTÕES DE AÇÃO ATUALIZADO
   Widget _buildActionButtons() {
     if (_currentOrder.status == OrderStatus.cotacao) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.check_circle), label: const Text('Converter em Pedido'), style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _converterParaPedido));
     if (_currentOrder.status == OrderStatus.pedido && _currentOrder.paymentStatus == PaymentStatus.aguardandoSinal) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento'), style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmInitialPayment));
-    if ((_currentOrder.status == OrderStatus.emFabricacao || _currentOrder.status == OrderStatus.aguardandoEntrega) && _currentOrder.paymentStatus == PaymentStatus.sinalPago) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento Final'), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmFinalPayment));
+    if (_currentOrder.status == OrderStatus.aguardandoEntrega) {
+      return Column(
+        children: [
+          SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.local_shipping), label: const Text('Registrar Saída para Entrega'), style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _showDeliveryDialog)),
+          const SizedBox(height: 10),
+          // Botão para ver o histórico
+          SizedBox(width: double.infinity, child: OutlinedButton.icon(
+            icon: const Icon(Icons.history),
+            label: const Text('Ver Histórico de Entregas'),
+            onPressed: () async {
+              // Precisamos dos dados do cliente e da empresa para passar para a tela de histórico
+              final client = await _firestoreService.getClientById(_currentOrder.clientId);
+              final companySettings = await _firestoreService.getCompanySettings();
+              if (client != null && mounted) {
+                Navigator.of(context).push(MaterialPageRoute(builder: (context) => DeliveryHistoryScreen(order: _currentOrder, client: client, companySettings: companySettings)));
+              }
+            },
+          )),
+        ],
+      );
+    }
+    if (_currentOrder.status == OrderStatus.emFabricacao && _currentOrder.paymentStatus == PaymentStatus.sinalPago) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento Final'), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmFinalPayment));
     return const SizedBox.shrink();
   }
+
+  // ... (getStatusColor e getStatusName)
   Color _getStatusColor(OrderStatus status) {
     switch (status) {
       case OrderStatus.cotacao: return Colors.blueGrey;

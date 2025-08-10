@@ -21,7 +21,7 @@ class Order {
   
   final double totalItemsAmount;
   final double shippingCost;
-  final double discount; // <-- NOVO CAMPO
+  final double discount;
   final double finalAmount;
   double amountPaid;
 
@@ -46,7 +46,7 @@ class Order {
     this.deliveryDate,
     required this.totalItemsAmount,
     this.shippingCost = 0.0,
-    this.discount = 0.0, // <-- NOVO CAMPO
+    this.discount = 0.0,
     required this.finalAmount,
     this.amountPaid = 0.0,
     this.paymentTerms,
@@ -62,6 +62,7 @@ class Order {
     String? clientId, String? clientName, List<OrderItem>? items, OrderStatus? status, PaymentStatus? paymentStatus,
     double? totalItemsAmount, double? shippingCost, double? discount, double? finalAmount, double? amountPaid,
     String? paymentTerms, String? paymentMethod, String? notes, Address? deliveryAddress,
+    Timestamp? deliveryDate, // <-- CAMPO ADICIONADO AQUI
   }) {
     return Order(
       id: id,
@@ -72,10 +73,10 @@ class Order {
       paymentStatus: paymentStatus ?? this.paymentStatus,
       creationDate: creationDate,
       confirmationDate: confirmationDate,
-      deliveryDate: deliveryDate,
+      deliveryDate: deliveryDate ?? this.deliveryDate, // <-- CAMPO ADICIONADO AQUI
       totalItemsAmount: totalItemsAmount ?? this.totalItemsAmount,
       shippingCost: shippingCost ?? this.shippingCost,
-      discount: discount ?? this.discount, // <-- NOVO CAMPO
+      discount: discount ?? this.discount,
       finalAmount: finalAmount ?? this.finalAmount,
       amountPaid: amountPaid ?? this.amountPaid,
       paymentTerms: paymentTerms ?? this.paymentTerms,
@@ -101,7 +102,7 @@ class Order {
       deliveryDate: null,
       totalItemsAmount: totalItemsAmount,
       shippingCost: shippingCost,
-      discount: 0, // Zera o desconto na duplicação
+      discount: 0,
       finalAmount: finalAmount,
       amountPaid: 0,
       paymentTerms: paymentTerms,
@@ -119,7 +120,7 @@ class Order {
       'clientId': clientId, 'clientName': clientName, 'items': items.map((item) => item.toJson()).toList(),
       'status': status.name, 'paymentStatus': paymentStatus.name, 'creationDate': creationDate,
       'confirmationDate': confirmationDate, 'deliveryDate': deliveryDate, 'totalItemsAmount': totalItemsAmount,
-      'shippingCost': shippingCost, 'discount': discount, 'finalAmount': finalAmount, // <-- NOVO CAMPO
+      'shippingCost': shippingCost, 'discount': discount, 'finalAmount': finalAmount,
       'amountPaid': amountPaid, 'paymentTerms': paymentTerms, 'paymentMethod': paymentMethod,
       'notes': notes, 'attachmentUrls': attachmentUrls, 'createdByUserId': createdByUserId,
       'createdByUserName': createdByUserName, 'deliveryAddress': deliveryAddress.toJson(),
@@ -142,7 +143,7 @@ class Order {
       deliveryDate: data['deliveryDate'],
       totalItemsAmount: (data['totalItemsAmount'] ?? 0.0).toDouble(),
       shippingCost: (data['shippingCost'] ?? 0.0).toDouble(),
-      discount: (data['discount'] ?? 0.0).toDouble(), // <-- NOVO CAMPO
+      discount: (data['discount'] ?? 0.0).toDouble(),
       finalAmount: (data['finalAmount'] ?? 0.0).toDouble(),
       amountPaid: (data['amountPaid'] ?? 0.0).toDouble(),
       paymentTerms: data['paymentTerms'],

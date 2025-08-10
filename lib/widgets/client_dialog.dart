@@ -1,4 +1,5 @@
 // lib/widgets/client_dialog.dart
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -24,8 +25,7 @@ class _ClientDialogState extends State<ClientDialog> with SingleTickerProviderSt
 
   bool _deliverySameAsBilling = true;
   bool _isLoadingCep = false;
-
-  final _cpfCnpjMask = MaskTextInputFormatter(mask: '##.###.###/####-##', filter: {"#": RegExp(r'[0-9]')});
+  
   final _phoneMask = MaskTextInputFormatter(mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
   final _cepMask = MaskTextInputFormatter(mask: '#####-###', filter: {"#": RegExp(r'[0-9]')});
 
@@ -33,6 +33,10 @@ class _ClientDialogState extends State<ClientDialog> with SingleTickerProviderSt
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _initializeControllers();
+  }
+  
+  void _initializeControllers() {
     final billing = widget.client?.billingAddress ?? Address();
     final delivery = widget.client?.deliveryAddress ?? Address();
     _nameController = TextEditingController(text: widget.client?.name ?? '');
@@ -104,28 +108,16 @@ class _ClientDialogState extends State<ClientDialog> with SingleTickerProviderSt
   void _submit() {
     if (_formKey.currentState!.validate()) {
       final billingAddr = Address(
-        cep: _billingCepController.text,
-        street: _billingStreetController.text,
-        neighborhood: _billingNeighborhoodController.text,
-        city: _billingCityController.text,
-        state: _billingStateController.text,
+        cep: _billingCepController.text, street: _billingStreetController.text, neighborhood: _billingNeighborhoodController.text,
+        city: _billingCityController.text, state: _billingStateController.text,
       );
       final deliveryAddr = _deliverySameAsBilling ? billingAddr : Address(
-        cep: _deliveryCepController.text,
-        street: _deliveryStreetController.text,
-        neighborhood: _deliveryNeighborhoodController.text,
-        city: _deliveryCityController.text,
-        state: _deliveryStateController.text,
+        cep: _deliveryCepController.text, street: _deliveryStreetController.text, neighborhood: _deliveryNeighborhoodController.text,
+        city: _deliveryCityController.text, state: _deliveryStateController.text,
       );
       final updatedClient = Client(
-        id: widget.client?.id,
-        name: _nameController.text,
-        cnpj: _cnpjController.text,
-        ie: _ieController.text,
-        phone: _phoneController.text,
-        email: _emailController.text,
-        billingAddress: billingAddr,
-        deliveryAddress: deliveryAddr,
+        id: widget.client?.id, name: _nameController.text, cnpj: _cnpjController.text, ie: _ieController.text,
+        phone: _phoneController.text, email: _emailController.text, billingAddress: billingAddr, deliveryAddress: deliveryAddr,
       );
       Navigator.of(context).pop(updatedClient);
     }
@@ -144,18 +136,12 @@ class _ClientDialogState extends State<ClientDialog> with SingleTickerProviderSt
             children: [
               TabBar(
                 controller: _tabController,
-                tabs: const [
-                  Tab(icon: Icon(Icons.person), text: 'Dados Principais'),
-                  Tab(icon: Icon(Icons.location_on), text: 'Endereços'),
-                ],
+                tabs: const [ Tab(icon: Icon(Icons.person), text: 'Dados Principais'), Tab(icon: Icon(Icons.location_on), text: 'Endereços')],
               ),
               Expanded(
                 child: TabBarView(
                   controller: _tabController,
-                  children: [
-                    _buildMainDataTab(),
-                    _buildAddressTab(),
-                  ],
+                  children: [ _buildMainDataTab(), _buildAddressTab()],
                 ),
               ),
             ],
@@ -178,15 +164,23 @@ class _ClientDialogState extends State<ClientDialog> with SingleTickerProviderSt
           const SizedBox(height: 16),
           Row(
             children: [
-              Expanded(child: TextFormField(controller: _cnpjController, inputFormatters: [_cpfCnpjMask, FilteringTextInputFormatter.digitsOnly], keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'CPF / CNPJ', border: OutlineInputBorder()))),
+              Expanded(child: TextFormField(
+                controller: _cnpjController,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly, // Garante que só números sejam digitados
+                  _CpfCnpjFormatter(), // Nosso formatador inteligente
+                ],
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'CPF / CNPJ', border: OutlineInputBorder()),
+              )),
               const SizedBox(width: 16),
               Expanded(child: TextFormField(controller: _ieController, decoration: const InputDecoration(labelText: 'IE / RG', border: OutlineInputBorder()))),
             ],
           ),
           const SizedBox(height: 16),
-           Row(
+            Row(
             children: [
-              Expanded(child: TextFormField(controller: _phoneController, inputFormatters: [_phoneMask, FilteringTextInputFormatter.digitsOnly], keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Telefone', border: OutlineInputBorder()), validator: (v) => v!.isEmpty ? 'Obrigatório' : null)),
+              Expanded(child: TextFormField(controller: _phoneController, inputFormatters: [_phoneMask], keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'Telefone', border: OutlineInputBorder()), validator: (v) => v!.isEmpty ? 'Obrigatório' : null)),
               const SizedBox(width: 16),
               Expanded(child: TextFormField(controller: _emailController, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Email', border: OutlineInputBorder()))),
             ],
@@ -223,7 +217,6 @@ class _ClientDialogState extends State<ClientDialog> with SingleTickerProviderSt
     );
   }
   
-   // A MUDANÇA ESTÁ AQUI DENTRO
   Widget _buildAddressForm(TextEditingController cepCtrl, TextEditingController streetCtrl, TextEditingController neighborhoodCtrl, TextEditingController cityCtrl, TextEditingController stateCtrl) {
     return Column(
       children: [
@@ -235,7 +228,6 @@ class _ClientDialogState extends State<ClientDialog> with SingleTickerProviderSt
               flex: 2, 
               child: TextFormField(
                 controller: cepCtrl, 
-                // CORREÇÃO: Removemos o FilteringTextInputFormatter.digitsOnly
                 inputFormatters: [_cepMask], 
                 keyboardType: TextInputType.number, 
                 decoration: InputDecoration(
@@ -262,6 +254,48 @@ class _ClientDialogState extends State<ClientDialog> with SingleTickerProviderSt
           ],
         ),
       ],
+    );
+  }
+}
+
+// ===== NOVO FORMATADOR INTELIGENTE E CORRETO =====
+class _CpfCnpjFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    final text = newValue.text;
+    
+    // Já removemos os não-dígitos com o FilteringTextInputFormatter, aqui só formatamos
+    if (text.isEmpty) {
+      return newValue;
+    }
+
+    final digitsOnly = text.replaceAll(RegExp(r'[^\d]'), '');
+
+    // ===== ADICIONADO LIMITE DE 14 DÍGITOS =====
+    if (digitsOnly.length > 14) {
+      return oldValue; // Impede que mais números sejam digitados
+    }
+
+    String newText;
+
+    if (digitsOnly.length <= 11) {
+      // Formato CPF
+      newText = digitsOnly.replaceAllMapped(
+        RegExp(r'(\d{3})(\d{3})(\d{3})(\d{2})'),
+        (Match m) => '${m[1]}.${m[2]}.${m[3]}-${m[4]}',
+      );
+    } else {
+      // Formato CNPJ
+      newText = digitsOnly.replaceAllMapped(
+        RegExp(r'(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})'),
+        (Match m) => '${m[1]}.${m[2]}.${m[3]}/${m[4]}-${m[5]}',
+      );
+    }
+
+    return TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: newText.length),
     );
   }
 }

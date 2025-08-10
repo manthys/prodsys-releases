@@ -9,6 +9,7 @@ import '../models/company_settings_model.dart';
 import '../models/expense_model.dart';
 import '../models/mold_model.dart';
 import '../models/stock_item_model.dart';
+import '../models/delivery_model.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../models/user_model.dart';
 
@@ -27,7 +28,6 @@ DateTime _calculateDeadline(DateTime startDate, int businessDays) {
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // --- CLIENTES ---
   Stream<List<Client>> getClientsStream() => _db.collection('clients').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Client.fromFirestore(doc.data(), doc.id)).toList());
   Future<void> addClient(Client client) => _db.collection('clients').add(client.toJson());
   Future<void> updateClient(Client client) => _db.collection('clients').doc(client.id).update(client.toJson());
@@ -36,8 +36,6 @@ class FirestoreService {
     final doc = await _db.collection('clients').doc(clientId).get();
     return doc.exists ? Client.fromFirestore(doc.data()!, doc.id) : null;
   }
-
-  // --- PRODUTOS (CATÁLOGO) ---
   Stream<List<Product>> getProductsStream() => _db.collection('products').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Product.fromFirestore(doc.data(), doc.id)).toList());
   Future<void> addProduct(Product product) => _db.collection('products').add(product.toJson());
   Future<void> updateProduct(Product product) => _db.collection('products').doc(product.id).update(product.toJson());
@@ -45,20 +43,8 @@ class FirestoreService {
     final doc = await _db.collection('products').doc(productId).get();
     return doc.exists ? Product.fromFirestore(doc.data()!, doc.id) : null;
   }
-  
-  // --- PEDIDOS ---
   Stream<List<Order>> getOrdersStream() => _db.collection('orders').orderBy('creationDate', descending: true).snapshots().map((snapshot) => snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList());
-  
-  // NOVA FUNÇÃO PARA BUSCAR PEDIDOS DE UM CLIENTE ESPECÍFICO
-  Stream<List<Order>> getOrdersForClientStream(String clientId) {
-    return _db
-        .collection('orders')
-        .where('clientId', isEqualTo: clientId)
-        .orderBy('creationDate', descending: true)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList());
-  }
-
+  Stream<List<Order>> getOrdersForClientStream(String clientId) => _db.collection('orders').where('clientId', isEqualTo: clientId).orderBy('creationDate', descending: true).snapshots().map((snapshot) => snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList());
   Future<DocumentReference> addOrder(Order order) => _db.collection('orders').add(order.toJson());
   Future<void> updateOrder(Order order) => _db.collection('orders').doc(order.id).update(order.toJson());
   Future<void> deleteOrder(String orderId) => _db.collection('orders').doc(orderId).delete();
@@ -76,22 +62,11 @@ class FirestoreService {
   }
   Future<void> updateOrderStatus(String orderId, OrderStatus newStatus, {bool setConfirmationDate = false}) {
     final Map<String, dynamic> dataToUpdate = {'status': newStatus.name};
-    if (setConfirmationDate) {
-      dataToUpdate['confirmationDate'] = Timestamp.now();
-    }
+    if (setConfirmationDate) dataToUpdate['confirmationDate'] = Timestamp.now();
     return _db.collection('orders').doc(orderId).update(dataToUpdate);
   }
-  Future<void> updateOrderPayment(String orderId, Map<String, dynamic> dataToUpdate) {
-    return _db.collection('orders').doc(orderId).update(dataToUpdate);
-  }
+  Future<void> updateOrderPayment(String orderId, Map<String, dynamic> dataToUpdate) => _db.collection('orders').doc(orderId).update(dataToUpdate);
   Future<void> addAttachmentUrlToOrder(String orderId, String url) => _db.collection('orders').doc(orderId).update({'attachmentUrls': FieldValue.arrayUnion([url])});
-  Future<List<Order>> getOrdersInDateRange(DateTime start, DateTime end) async {
-    final validStatuses = [OrderStatus.pedido.name, OrderStatus.emFabricacao.name, OrderStatus.finalizado.name, OrderStatus.aguardandoEntrega.name];
-    final snapshot = await _db.collection('orders').where('status', whereIn: validStatuses).where('creationDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start)).where('creationDate', isLessThanOrEqualTo: Timestamp.fromDate(end)).get();
-    return snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList();
-  }
-
-  // --- ITENS DE ESTOQUE E PRODUÇÃO ---
   Future<void> createStockItemsForOrder(Order order) {
     final batch = _db.batch();
     final confirmationTime = order.confirmationDate ?? Timestamp.now();
@@ -127,38 +102,56 @@ class FirestoreService {
   }
   Future<void> checkAndUpdateOrderStatusAfterProduction(String orderId) async {
     final order = await getOrderById(orderId);
-    if (order == null) return;
-    if (order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado) {
-      return;
-    }
+    if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado) return;
     final totalItemsInOrder = order.items.fold<int>(0, (sum, item) => sum + item.quantity);
-    final producedItemsSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).where('status', isEqualTo: StockItemStatus.emEstoque.name).get();
-    final producedItemsCount = producedItemsSnapshot.docs.length;
-    if (producedItemsCount >= totalItemsInOrder) {
+    final producedItemsSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).where('status', whereIn: [StockItemStatus.emEstoque.name, StockItemStatus.emTransito.name, StockItemStatus.entregue.name]).get();
+    if (producedItemsSnapshot.docs.length >= totalItemsInOrder) {
       await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
     }
   }
-
-  // --- FORMAS (MOLDS) ---
+  Future<void> createDeliveryAndUpdateStock(Delivery delivery, List<StockItem> stockItemsToUpdate) async {
+    final batch = _db.batch();
+    final deliveryData = delivery.toJson();
+    deliveryData['status'] = DeliveryStatus.emTransito.name;
+    final deliveryRef = _db.collection('deliveries').doc();
+    batch.set(deliveryRef, deliveryData);
+    for (final stockItem in stockItemsToUpdate) {
+      final stockRef = _db.collection('stock_items').doc(stockItem.id);
+      batch.update(stockRef, {'status': StockItemStatus.emTransito.name, 'deliveryId': deliveryRef.id});
+    }
+    await batch.commit();
+  }
+  Stream<List<Delivery>> getDeliveriesForOrderStream(String orderId) => _db.collection('deliveries').where('orderId', isEqualTo: orderId).orderBy('deliveryDate', descending: true).snapshots().map((snapshot) => snapshot.docs.map((doc) => Delivery.fromFirestore(doc.data(), doc.id)).toList());
+  Future<void> confirmDeliveryAsCompleted(String orderId, String deliveryId) async {
+    final batch = _db.batch();
+    final deliveryRef = _db.collection('deliveries').doc(deliveryId);
+    batch.update(deliveryRef, {'status': DeliveryStatus.entregue.name});
+    final stockItemsSnapshot = await _db.collection('stock_items').where('deliveryId', isEqualTo: deliveryId).get();
+    for (final doc in stockItemsSnapshot.docs) {
+      batch.update(doc.reference, {'status': StockItemStatus.entregue.name});
+    }
+    await batch.commit();
+    final order = await getOrderById(orderId);
+    if (order == null) return;
+    final totalItemsInOrder = order.items.fold<int>(0, (sum, item) => sum + item.quantity);
+    final deliveredItemsSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).where('status', isEqualTo: StockItemStatus.entregue.name).get();
+    if (deliveredItemsSnapshot.docs.length >= totalItemsInOrder && order.paymentStatus == PaymentStatus.pagoIntegralmente) {
+      await updateOrderStatus(orderId, OrderStatus.finalizado);
+    }
+  }
   Stream<List<Mold>> getMoldsStream() => _db.collection('molds').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Mold.fromFirestore(doc.data(), doc.id)).toList());
   Future<void> addMold(Mold mold) => _db.collection('molds').add(mold.toJson());
   Future<void> updateMold(Mold mold) => _db.collection('molds').doc(mold.id).update(mold.toJson());
   Future<void> deleteMold(String moldId) => _db.collection('molds').doc(moldId).delete();
-
-  // --- CONFIGURAÇÕES ---
   Future<void> saveCompanySettings(CompanySettings settings) => _db.collection('settings').doc('company_info').set(settings.toJson());
   Future<CompanySettings> getCompanySettings() async {
     final doc = await _db.collection('settings').doc('company_info').get();
     return CompanySettings.fromFirestore(doc.data());
   }
-  
-  // --- DESPESAS ---
   Stream<List<Expense>> getExpensesStream() => _db.collection('expenses').orderBy('expenseDate', descending: true).snapshots().map((snapshot) => snapshot.docs.map((doc) => Expense.fromFirestore(doc.data(), doc.id)).toList());
   Future<void> addExpense(Expense expense) => _db.collection('expenses').add(expense.toJson());
   Future<void> updateExpense(Expense expense) => _db.collection('expenses').doc(expense.id).update(expense.toJson());
   Future<void> deleteExpense(String expenseId) => _db.collection('expenses').doc(expenseId).delete();
-  
-  // --- QUERIES COMPOSTAS ---
   Stream<Map<String, dynamic>> getDataForProductionPlanStream() {
     return Rx.combineLatest3(
       getMoldsStream(),

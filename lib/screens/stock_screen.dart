@@ -14,6 +14,9 @@ class StockScreen extends StatelessWidget {
         return Colors.orange;
       case StockItemStatus.emEstoque:
         return Colors.green;
+      // ===== NOVO STATUS ADICIONADO =====
+      case StockItemStatus.emTransito:
+        return Colors.blue;
       case StockItemStatus.entregue:
         return Colors.blueGrey;
     }
@@ -25,8 +28,25 @@ class StockScreen extends StatelessWidget {
         return 'Aguardando Produção';
       case StockItemStatus.emEstoque:
         return 'Em Estoque';
+      // ===== NOVO STATUS ADICIONADO =====
+      case StockItemStatus.emTransito:
+        return 'Em Trânsito';
       case StockItemStatus.entregue:
         return 'Entregue';
+    }
+  }
+  
+  IconData _getStatusIcon(StockItemStatus status) {
+    switch (status) {
+      case StockItemStatus.aguardandoProducao:
+        return Icons.watch_later_outlined;
+      case StockItemStatus.emEstoque:
+        return Icons.inventory_2_outlined;
+      // ===== NOVO ÍCONE ADICIONADO =====
+      case StockItemStatus.emTransito:
+        return Icons.local_shipping_outlined;
+      case StockItemStatus.entregue:
+        return Icons.check_circle_outline;
     }
   }
 
@@ -50,31 +70,26 @@ class StockScreen extends StatelessWidget {
 
           final allStockItems = snapshot.data!;
 
-          // ===== LÓGICA DE AGRUPAMENTO COMEÇA AQUI =====
           final groupedItems = <String, Map<String, dynamic>>{};
 
           for (var item in allStockItems) {
-            // Cria uma chave única para agrupar itens idênticos do mesmo pedido e status
             final key = '${item.orderId}_${item.productId}_${item.status.name}_${item.logoType}';
             
             groupedItems.update(
               key,
               (value) {
-                // Se o grupo já existe, apenas incrementa a contagem
                 value['count'] = value['count'] + 1;
                 return value;
               },
-              // Se o grupo não existe, cria um novo
               ifAbsent: () => {
-                'item': item, // Guarda o primeiro item como referência
-                'count': 1,   // Inicia a contagem em 1
+                'item': item,
+                'count': 1,
               },
             );
           }
 
           final groupedList = groupedItems.values.toList();
-          // =================================================
-
+          
           return ListView.builder(
             padding: const EdgeInsets.all(8),
             itemCount: groupedList.length,
@@ -88,20 +103,17 @@ class StockScreen extends StatelessWidget {
                   leading: CircleAvatar(
                     backgroundColor: _getStatusColor(item.status),
                     foregroundColor: Colors.white,
-                    child: Text(
-                      count.toString(), 
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                    child: Tooltip( // Tooltip para mostrar o nome do status
+                      message: _getStatusName(item.status),
+                      child: Icon(_getStatusIcon(item.status)),
                     ),
                   ),
-                  title: Text(item.productName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  subtitle: Text(
-                    'Status: ${_getStatusName(item.status)}\n'
-                    'Pedido: #${item.orderId?.substring(0, 6).toUpperCase() ?? 'N/A'} | Logo: ${item.logoType}'
-                  ),
+                  title: Text('${item.sku} - ${item.productName}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text('Status: ${_getStatusName(item.status)}\nPedido: #${item.orderId?.substring(0, 6).toUpperCase() ?? 'Estoque Manual'}'),
                   isThreeLine: true,
                   trailing: Text(
-                    'Criado em:\n${DateFormat('dd/MM/yy').format(item.creationDate.toDate())}',
-                    textAlign: TextAlign.right,
+                    '${count.toString()} un.',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
               );

@@ -1,6 +1,6 @@
 // lib/screens/settings_screen.dart
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
@@ -24,6 +24,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _companyNameController, _cnpjController, _phoneController, _emailController;
   late TextEditingController _cepController, _streetController, _neighborhoodController, _cityController, _stateController;
   late TextEditingController _paymentInfoController;
+  late TextEditingController _paymentTermsController;
 
   final _cnpjMask = MaskTextInputFormatter(mask: '##.###.###/####-##', filter: {"#": RegExp(r'[0-9]')});
   final _phoneMask = MaskTextInputFormatter(mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')});
@@ -47,6 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _cityController = TextEditingController();
     _stateController = TextEditingController();
     _paymentInfoController = TextEditingController();
+    _paymentTermsController = TextEditingController();
   }
 
   @override
@@ -61,6 +63,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _cityController.dispose();
     _stateController.dispose();
     _paymentInfoController.dispose();
+    _paymentTermsController.dispose();
     super.dispose();
   }
 
@@ -77,6 +80,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _cityController.text = settings.address.city;
     _stateController.text = settings.address.state;
     _paymentInfoController.text = settings.paymentInfo;
+    _paymentTermsController.text = settings.defaultPaymentTerms;
 
     if (mounted) {
       setState(() {
@@ -131,6 +135,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           state: _stateController.text,
         ),
         paymentInfo: _paymentInfoController.text,
+        defaultPaymentTerms: _paymentTermsController.text,
       );
 
       await _firestoreService.saveCompanySettings(settings);
@@ -185,8 +190,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     ]),
                     
                     const SizedBox(height: 24),
-                    Text('Informações de Pagamento', style: Theme.of(context).textTheme.titleLarge),
+                    Text('Informações Financeiras', style: Theme.of(context).textTheme.titleLarge),
                     const Divider(height: 24),
+                    
+                    TextFormField(
+                      controller: _paymentTermsController,
+                      decoration: const InputDecoration(labelText: 'Termos de Pagamento Padrão', border: OutlineInputBorder(), hintText: 'Ex: 50% de entrada e 50% na entrega.'),
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 16),
                     TextFormField(
                       controller: _paymentInfoController,
                       decoration: const InputDecoration(labelText: 'Dados para Pagamento (Chave PIX, Banco, etc.)', border: OutlineInputBorder(), hintText: 'Ex: PIX (CNPJ): 12.345.678/0001-99\nBanco do Brasil, Ag: 1234, C/C: 56789-0'),
@@ -202,6 +214,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
               icon: const Icon(Icons.save),
               label: const Text('Salvar Alterações'),
             ),
-        );
+          );
   }
 }

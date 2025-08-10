@@ -1,4 +1,5 @@
 // lib/screens/products_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/product_model.dart';
@@ -24,44 +25,49 @@ class ProductsScreen extends StatelessWidget {
       }
     }
 
-    return StreamBuilder<List<Product>>(
-      stream: firestoreService.getProductsStream(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        if (snapshot.hasError) return Center(child: Text('Erro: ${snapshot.error}'));
-        if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('Nenhum produto cadastrado.'));
+    return Scaffold( // Adicionado Scaffold para consistência
+      body: StreamBuilder<List<Product>>(
+        stream: firestoreService.getProductsStream(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (snapshot.hasError) return Center(child: Text('Erro: ${snapshot.error}'));
+          if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('Nenhum produto cadastrado.'));
 
-        final products = snapshot.data!;
-        return ListView(
-          padding: const EdgeInsets.all(16.0),
-          children: [
-            DataTable(
-              columns: const [
-                DataColumn(label: Text('Nome/Descrição', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('SKU', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Tipo de Forma', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Preço Base', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Adic. Logo', style: TextStyle(fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('Ações', style: TextStyle(fontWeight: FontWeight.bold))),
-              ],
-              rows: products.map((product) {
-                return DataRow(cells: [
-                  DataCell(Text(product.name)),
-                  DataCell(Text(product.sku)),
-                  DataCell(Text(product.moldType)),
-                  DataCell(Text(currencyFormatter.format(product.basePrice))),
-                  DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
-                  DataCell(Row(
-                    children: [
-                      IconButton(icon: const Icon(Icons.edit, color: Colors.blue), tooltip: 'Editar', onPressed: () => showProductDialog(product: product)),
-                    ],
-                  )),
-                ]);
-              }).toList(),
+          final products = snapshot.data!;
+          
+          // ===== ESTRUTURA DE LAYOUT CORRIGIDA =====
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(16.0),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal, // Permite rolar para os lados
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('Nome/Descrição', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('SKU', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Tipo de Forma', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Preço Base', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Adic. Logo', style: TextStyle(fontWeight: FontWeight.bold))),
+                  DataColumn(label: Text('Ações', style: TextStyle(fontWeight: FontWeight.bold))),
+                ],
+                rows: products.map((product) {
+                  return DataRow(cells: [
+                    DataCell(Text(product.name)),
+                    DataCell(Text(product.sku)),
+                    DataCell(Text(product.moldType)),
+                    DataCell(Text(currencyFormatter.format(product.basePrice))),
+                    DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
+                    DataCell(Row(
+                      children: [
+                        IconButton(icon: const Icon(Icons.edit, color: Colors.blue), tooltip: 'Editar', onPressed: () => showProductDialog(product: product)),
+                      ],
+                    )),
+                  ]);
+                }).toList(),
+              ),
             ),
-          ],
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }
