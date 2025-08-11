@@ -1,6 +1,7 @@
 // lib/screens/main_screen.dart
 
 import 'package:flutter/material.dart';
+import 'package:package_info_plus/package_info_plus.dart'; // <-- NOVO IMPORT
 import 'package:url_launcher/url_launcher.dart';
 import '../models/client_model.dart';
 import '../models/expense_model.dart';
@@ -39,12 +40,14 @@ class _MainScreenState extends State<MainScreen> {
   String _userRole = 'employee';
   bool _isLoadingRole = true;
 
+  // ... (listas de telas e títulos permanecem as mesmas)
   final List<Widget> _adminScreens = const [DashboardScreen(), OrdersScreen(), ProductionScreen(), StockScreen(), ClientsScreen(), ProductsScreen(), MoldsScreen(), ExpensesScreen(), ManageUsersScreen(), SettingsScreen()];
   final List<String> _adminTitles = const ['Dashboard', 'Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos', 'Gerenciar Formas', 'Controle de Gastos', 'Gerenciar Usuários', 'Configurações da Empresa'];
   final List<NavigationRailDestination> _adminDestinations = const [NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Dashboard')), NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos')), NavigationRailDestination(icon: Icon(Icons.handyman_outlined), selectedIcon: Icon(Icons.handyman), label: Text('Formas')), NavigationRailDestination(icon: Icon(Icons.money_off_outlined), selectedIcon: Icon(Icons.money_off), label: Text('Gastos')), NavigationRailDestination(icon: Icon(Icons.manage_accounts_outlined), selectedIcon: Icon(Icons.manage_accounts), label: Text('Usuários')), NavigationRailDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: Text('Ajustes'))];
   final List<Widget> _employeeScreens = const [OrdersScreen(), ProductionScreen(), StockScreen(), ClientsScreen()];
   final List<String> _employeeTitles = const ['Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes'];
   final List<NavigationRailDestination> _employeeDestinations = const [NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes'))];
+
 
   @override
   void initState() {
@@ -67,10 +70,45 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  void _showAboutDialog(BuildContext context) {
-    showDialog(context: context, builder: (context) => AlertDialog(title: const Text('Sobre o Sistema'), content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('ProdSys - Sistema de Gestão v1.0.0'), const SizedBox(height: 20), const Text('Desenvolvido por:'), Text('Manthysr', style: TextStyle(fontWeight: FontWeight.bold)), const SizedBox(height: 10), InkWell(child: Text('Contato: cmanthysr@gmail.com', style: TextStyle(color: Colors.blue, decoration: TextDecoration.underline)), onTap: () => launchUrl(Uri.parse('mailto:cmanthysr@gmail.com')))]), actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Fechar'))]));
+  // ===== FUNÇÃO "SOBRE" ATUALIZADA =====
+  void _showAboutDialog(BuildContext context) async {
+    // Busca a informação da versão atual do pacote
+    final packageInfo = await PackageInfo.fromPlatform();
+    final version = packageInfo.version;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sobre o ProdSys'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Versão Instalada: $version', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 20),
+            const Text('Desenvolvido por:'),
+            const Text('Manthysr', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 10),
+            InkWell(
+              child: Text(
+                'Contato: cmanthysr@gmail.com',
+                style: TextStyle(color: Colors.blue, decoration: TextDecoration.underline),
+              ),
+              onTap: () => launchUrl(Uri.parse('mailto:cmanthysr@gmail.com')),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
+    );
   }
 
+  // ... (o resto do arquivo, incluindo _buildFab e o método build, continua igual)
   Widget? _buildFab(BuildContext fabContext) {
     final bool isAdmin = _userRole == 'admin';
     String? tooltip;
@@ -92,7 +130,6 @@ class _MainScreenState extends State<MainScreen> {
     }
     return null;
   }
-
   @override
   Widget build(BuildContext context) {
     final bool isAdmin = _userRole == 'admin';
@@ -166,7 +203,6 @@ class _MainScreenState extends State<MainScreen> {
             ],
           ),
 
-          // ===== ASSINATURA UNIFICADA NO CANTO INFERIOR DIREITO =====
           Positioned(
             bottom: 10,
             right: 10,
