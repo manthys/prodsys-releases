@@ -1,7 +1,7 @@
 // lib/widgets/stock_item_dialog.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // <-- A CORREÇÃO ESTAVA NESTA LINHA
+import 'package:flutter/services.dart';
 import '../models/product_model.dart';
 import '../services/firestore_service.dart';
 
@@ -44,7 +44,7 @@ class _StockItemDialogState extends State<StockItemDialog> {
                     isExpanded: true,
                     items: products.map((product) => DropdownMenuItem<Product>(
                       value: product,
-                      child: Text(product.name, overflow: TextOverflow.ellipsis),
+                      child: Text('${product.sku} - ${product.name}', overflow: TextOverflow.ellipsis),
                     )).toList(),
                     onChanged: (product) => setState(() => _selectedProduct = product),
                     validator: (value) => value == null ? 'Selecione um produto' : null,
@@ -62,11 +62,22 @@ class _StockItemDialogState extends State<StockItemDialog> {
               const SizedBox(height: 16),
               const Text('Tipo de Logo:'),
               RadioListTile<String>(
-                title: const Text('Nenhuma'), value: 'Nenhum', groupValue: _logoType,
+                title: const Text('Nenhuma'),
+                value: 'Nenhum',
+                groupValue: _logoType,
                 onChanged: (value) => setState(() => _logoType = value!),
               ),
               RadioListTile<String>(
-                title: const Text('Logomarca da Empresa'), value: 'Própria', groupValue: _logoType,
+                title: const Text('Logomarca da Empresa'),
+                value: 'Própria',
+                groupValue: _logoType,
+                onChanged: (value) => setState(() => _logoType = value!),
+              ),
+              // ===== OPÇÃO ADICIONADA =====
+              RadioListTile<String>(
+                title: const Text('Logomarca do Cliente'),
+                value: 'Cliente',
+                groupValue: _logoType,
                 onChanged: (value) => setState(() => _logoType = value!),
               ),
             ],
