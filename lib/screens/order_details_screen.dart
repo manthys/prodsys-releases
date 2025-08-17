@@ -7,18 +7,18 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../models/client_model.dart';
-import '../models/company_settings_model.dart';
 import '../models/delivery_model.dart';
 import '../models/order_model.dart';
 import '../models/stock_item_model.dart';
+import '../models/client_model.dart';
+import '../models/company_settings_model.dart';
 import '../services/auth_service.dart';
-import '../services/delivery_pdf_service.dart';
 import '../services/firestore_service.dart';
 import '../services/pdf_service.dart';
+import '../services/delivery_pdf_service.dart';
 import '../widgets/delivery_dialog.dart';
-import 'delivery_history_screen.dart';
 import 'order_form_screen.dart';
+import 'delivery_history_screen.dart';
 
 class OrderDetailsScreen extends StatefulWidget {
   final Order order;
@@ -31,7 +31,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   final AuthService _authService = AuthService();
   final PdfService _orderPdfService = PdfService();
-  final DeliveryPdfService _deliveryPdfService = DeliveryPdfService();
   late Order _currentOrder;
   bool _isGeneratingPdf = false;
   bool _isUploading = false;
@@ -41,7 +40,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     super.initState();
     _currentOrder = widget.order;
   }
-
+  
   Future<void> _reloadOrder() async {
     final updatedOrder = await _firestoreService.getOrderById(_currentOrder.id!);
     if (updatedOrder != null && mounted) setState(() => _currentOrder = updatedOrder);
@@ -138,8 +137,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (confirmed != true) return;
     setState(() => _isUploading = true);
     try {
-      final Map<String, dynamic> dataToUpdate = {'amountPaid': _currentOrder.finalAmount, 'paymentStatus': PaymentStatus.pagoIntegralmente.name};
-      await _firestoreService.updateOrderPayment(_currentOrder.id!, dataToUpdate);
       if (pickedFile != null && pickedFile!.path != null) {
         final file = File(pickedFile!.path!);
         final ref = FirebaseStorage.instance.ref('payment_proofs/${_currentOrder.id}/${DateTime.now().millisecondsSinceEpoch}_${pickedFile!.name}');
@@ -147,6 +144,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         final downloadUrl = await uploadTask.ref.getDownloadURL();
         await _firestoreService.addAttachmentUrlToOrder(_currentOrder.id!, downloadUrl);
       }
+      await _firestoreService.confirmFinalPaymentAndUpdateStatus(_currentOrder.id!);
       _showSnackBar("Pagamento final confirmado!");
       _reloadOrder();
     } catch (e) {
@@ -213,6 +211,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
+  // FUNÇÃO PARA FORÇAR A VERIFICAÇÃO (PARA CORRIGIR PEDIDOS ANTIGOS)
+  void _forceRecheckStatus() async {
+    await _firestoreService.checkIfOrderIsFullyCompleted(_currentOrder.id!);
+    _showSnackBar('Verificação de status concluída.');
+    _reloadOrder();
+  }
+  
   @override
   Widget build(BuildContext context) {
     final bool canBeEdited = _currentOrder.status == OrderStatus.cotacao || _currentOrder.status == OrderStatus.pedido;
@@ -220,6 +225,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       appBar: AppBar(
         title: Text('Detalhes #${_currentOrder.id?.substring(0, 6).toUpperCase() ?? ''}'),
         actions: [
+          if (_currentOrder.status != OrderStatus.finalizado && _currentOrder.status != OrderStatus.cancelado)
+            IconButton(icon: const Icon(Icons.sync), tooltip: 'Forçar Verificação de Status', onPressed: _forceRecheckStatus),
           IconButton(icon: const Icon(Icons.copy_all_outlined), tooltip: 'Duplicar Pedido', onPressed: _duplicateOrder),
           if (canBeEdited) IconButton(icon: const Icon(Icons.edit), tooltip: 'Editar Pedido', onPressed: _navigateToEditScreen),
           IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Gerar PDF do Pedido', onPressed: _generateOrderPdf),
@@ -243,7 +250,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       ])),
     );
   }
-
+  
   Widget _buildClientInfoSection() {
     final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Cliente: ${_currentOrder.clientName}', style: Theme.of(context).textTheme.titleLarge), const SizedBox(height: 8), Text('Data: ${dateFormatter.format(_currentOrder.creationDate.toDate())}'), Text('Criado por: ${_currentOrder.createdByUserName}'), const SizedBox(height: 8), Row(children: [Text('Status: ', style: Theme.of(context).textTheme.bodyLarge), Chip(label: Text(_getStatusName(_currentOrder.status), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), backgroundColor: _getStatusColor(_currentOrder.status), padding: const EdgeInsets.symmetric(horizontal: 8))])]);
@@ -276,8 +283,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (_currentOrder.status == OrderStatus.cotacao) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.check_circle), label: const Text('Converter em Pedido'), style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _converterParaPedido));
     if (_currentOrder.status == OrderStatus.pedido && _currentOrder.paymentStatus == PaymentStatus.aguardandoSinal) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento'), style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmInitialPayment));
     if (_currentOrder.status == OrderStatus.aguardandoEntrega) {
-      return Column(children: [SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.local_shipping), label: const Text('Registrar Saída para Entrega'), style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _showDeliveryDialog)), if (_currentOrder.paymentStatus == PaymentStatus.sinalPago) ...[const SizedBox(height: 10), SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento Final'), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmFinalPayment))]]
-      );
+      List<Widget> buttons = [SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.local_shipping), label: const Text('Registrar Saída para Entrega'), style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _showDeliveryDialog))];
+      if (_currentOrder.paymentStatus == PaymentStatus.sinalPago) {
+        buttons.add(const SizedBox(height: 10));
+        buttons.add(SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento Final'), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmFinalPayment)));
+      }
+      return Column(children: buttons);
     }
     if (_currentOrder.status == OrderStatus.emFabricacao && _currentOrder.paymentStatus == PaymentStatus.sinalPago) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento Final'), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmFinalPayment));
     return const SizedBox.shrink();

@@ -72,27 +72,13 @@ class FirestoreService {
     final confirmationTime = order.confirmationDate ?? Timestamp.now();
     final deadlineDate = _calculateDeadline(confirmationTime.toDate(), 10);
     final deadlineTimestamp = Timestamp.fromDate(deadlineDate);
-
     for (final orderItem in order.items) {
       int neededQuantity = orderItem.quantity;
-
-      final availableStockQuery = await _db.collection('stock_items')
-          .where('productId', isEqualTo: orderItem.productId)
-          .where('logoType', isEqualTo: orderItem.logoType)
-          .where('status', isEqualTo: StockItemStatus.emEstoque.name)
-          .where('orderId', isNull: true)
-          .limit(neededQuantity)
-          .get();
-      
+      final availableStockQuery = await _db.collection('stock_items').where('productId', isEqualTo: orderItem.productId).where('logoType', isEqualTo: orderItem.logoType).where('status', isEqualTo: StockItemStatus.emEstoque.name).where('orderId', isNull: true).limit(neededQuantity).get();
       for (final doc in availableStockQuery.docs) {
-        batch.update(doc.reference, {
-          'orderId': order.id,
-          'clientName': order.clientName,
-          'deliveryDeadline': deadlineTimestamp,
-        });
+        batch.update(doc.reference, {'orderId': order.id, 'clientName': order.clientName, 'deliveryDeadline': deadlineTimestamp});
         neededQuantity--;
       }
-
       if (neededQuantity > 0) {
         for (int i = 0; i < neededQuantity; i++) {
           final newStockItem = StockItem(
@@ -107,15 +93,65 @@ class FirestoreService {
     }
     await batch.commit();
   }
-  Future<void> addManualStockItem(Product product, int quantity, String logoType) {
+  Future<void> addManualStockItem(Product product, int quantity, String logoType) async {
     final batch = _db.batch();
-    for (int i = 0; i < quantity; i++) {
-      final newStockItem = StockItem(productId: product.id!, productName: product.name, sku: product.sku, status: StockItemStatus.emEstoque, logoType: logoType, creationDate: Timestamp.now());
-      final docRef = _db.collection('stock_items').doc();
-      batch.set(docRef, newStockItem.toJson());
+    int remainingQty = quantity;
+    final pendingItemsQuery = await _db.collection('stock_items').where('productId', isEqualTo: product.id!).where('logoType', isEqualTo: logoType).where('status', isEqualTo: StockItemStatus.aguardandoProducao.name).orderBy('deliveryDeadline').get();
+    for (var doc in pendingItemsQuery.docs) {
+      if (remainingQty == 0) break;
+      final pendingItemData = doc.data();
+      batch.update(doc.reference, {'status': StockItemStatus.emEstoque.name, 'creationDate': Timestamp.now(), 'orderId': pendingItemData['orderId'], 'clientName': pendingItemData['clientName'], 'deliveryDeadline': pendingItemData['deliveryDeadline']});
+      remainingQty--;
     }
-    return batch.commit();
+    if (remainingQty > 0) {
+      for (int i = 0; i < remainingQty; i++) {
+        final newStockItem = StockItem(productId: product.id!, productName: product.name, sku: product.sku, status: StockItemStatus.emEstoque, logoType: logoType, creationDate: Timestamp.now());
+        final docRef = _db.collection('stock_items').doc();
+        batch.set(docRef, newStockItem.toJson());
+      }
+    }
+    await batch.commit();
   }
+  
+  // ===== FUNÇÃO CORRIGIDA =====
+  Future<void> adjustStockQuantity(StockItem originalItem, int initialQuantity, int newQuantity, String reason) async {
+    final batch = _db.batch();
+    int difference = initialQuantity - newQuantity;
+
+    if (difference <= 0) return; // Apenas para diminuição de estoque
+
+    // Busca os itens exatos a serem removidos, garantindo que o orderId seja nulo se o original for nulo
+    Query query = _db.collection('stock_items')
+        .where('productId', isEqualTo: originalItem.productId)
+        .where('logoType', isEqualTo: originalItem.logoType)
+        .where('status', isEqualTo: originalItem.status.name)
+        .where('orderId', isEqualTo: originalItem.orderId);
+        
+    final itemsToRemoveSnapshot = await query.limit(difference).get();
+
+    for (var doc in itemsToRemoveSnapshot.docs) {
+      batch.delete(doc.reference);
+    }
+    
+    // Lógica inteligente: só repõe na produção se o item pertencia a um pedido
+    if (originalItem.orderId != null && 
+        (originalItem.status == StockItemStatus.aguardandoProducao || originalItem.status == StockItemStatus.emEstoque)) {
+      
+      for (int i = 0; i < difference; i++) {
+        final newItem = StockItem(
+          productId: originalItem.productId, productName: originalItem.productName, sku: originalItem.sku,
+          orderId: originalItem.orderId, clientName: originalItem.clientName, status: StockItemStatus.aguardandoProducao,
+          logoType: originalItem.logoType, creationDate: Timestamp.now(),
+          deliveryDeadline: originalItem.deliveryDeadline,
+        );
+        final docRef = _db.collection('stock_items').doc();
+        batch.set(docRef, newItem.toJson());
+      }
+    }
+    
+    await batch.commit();
+  }
+
   Stream<List<StockItem>> getStockItemsStream() => _db.collection('stock_items').orderBy('creationDate', descending: true).snapshots().map((snapshot) => snapshot.docs.map((doc) => StockItem.fromFirestore(doc.data(), doc.id)).toList());
   Stream<List<StockItem>> getStockItemsByStatus(StockItemStatus status) => _db.collection('stock_items').where('status', isEqualTo: status.name).orderBy('deliveryDeadline').snapshots().map((snapshot) => snapshot.docs.map((doc) => StockItem.fromFirestore(doc.data(), doc.id)).toList());
   Future<void> launchProductionRun(List<StockItem> itemsToLaunch) async {
@@ -157,35 +193,24 @@ class FirestoreService {
       batch.update(doc.reference, {'status': StockItemStatus.entregue.name});
     }
     await batch.commit();
+    await checkIfOrderIsFullyCompleted(orderId);
+  }
+  Future<void> confirmFinalPaymentAndUpdateStatus(String orderId) async {
     final order = await getOrderById(orderId);
     if (order == null) return;
+    await updateOrderPayment(orderId, {'amountPaid': order.finalAmount, 'paymentStatus': PaymentStatus.pagoIntegralmente.name});
+    await checkIfOrderIsFullyCompleted(orderId);
+  }
+  Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
+    final order = await getOrderById(orderId);
+    if (order == null || order.status == OrderStatus.finalizado) return;
     final totalItemsInOrder = order.items.fold<int>(0, (sum, item) => sum + item.quantity);
     final deliveredItemsSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).where('status', isEqualTo: StockItemStatus.entregue.name).get();
-    if (deliveredItemsSnapshot.docs.length >= totalItemsInOrder && order.paymentStatus == PaymentStatus.pagoIntegralmente) {
+    final allItemsDelivered = deliveredItemsSnapshot.docs.length >= totalItemsInOrder;
+    final isFullyPaid = order.paymentStatus == PaymentStatus.pagoIntegralmente;
+    if (allItemsDelivered && isFullyPaid) {
       await updateOrderStatus(orderId, OrderStatus.finalizado);
     }
-  }
-  Future<void> adjustStockQuantity(StockItem originalItem, int initialQuantity, int newQuantity, String reason) async {
-    final batch = _db.batch();
-    int difference = initialQuantity - newQuantity;
-    if (difference <= 0) return;
-    final itemsToRemoveQuery = await _db.collection('stock_items').where('productId', isEqualTo: originalItem.productId).where('logoType', isEqualTo: originalItem.logoType).where('status', isEqualTo: originalItem.status.name).where('orderId', isEqualTo: originalItem.orderId).limit(difference).get();
-    for (var doc in itemsToRemoveQuery.docs) {
-      batch.delete(doc.reference);
-    }
-    if (originalItem.status == StockItemStatus.aguardandoProducao) {
-      for (int i = 0; i < difference; i++) {
-        final newItem = StockItem(
-          productId: originalItem.productId, productName: originalItem.productName, sku: originalItem.sku,
-          orderId: originalItem.orderId, clientName: originalItem.clientName, status: StockItemStatus.aguardandoProducao,
-          logoType: originalItem.logoType, creationDate: Timestamp.now(),
-          deliveryDeadline: originalItem.deliveryDeadline,
-        );
-        final docRef = _db.collection('stock_items').doc();
-        batch.set(docRef, newItem.toJson());
-      }
-    }
-    await batch.commit();
   }
   Stream<List<Mold>> getMoldsStream() => _db.collection('molds').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Mold.fromFirestore(doc.data(), doc.id)).toList());
   Future<void> addMold(Mold mold) => _db.collection('molds').add(mold.toJson());

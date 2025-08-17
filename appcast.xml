@@ -3,9 +3,9 @@
     <channel>
         <title>ProdSys Releases</title>
         <item>
-            <title>Versão 1.2.1</title>
-            <enclosure url="https://github.com/manthys/prodsys-releases/releases/download/v1.2.1/setup-prodsys-1.2.1.exe"
-                sparkle:version="1.2.1"
+            <title>Versão 1.3.1</title>
+            <enclosure url="https://github.com/manthys/prodsys-releases/releases/download/v1.3.1/setup-prodsys-1.3.1.exe"
+                sparkle:version="1.3.1"
                 type="application/octet-stream" />
         </item>
     </channel>

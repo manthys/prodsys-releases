@@ -2,10 +2,12 @@
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import '../models/order_model.dart';
 import '../models/product_model.dart';
 import '../models/stock_item_model.dart';
 import '../services/firestore_service.dart';
 import '../widgets/stock_adjustment_dialog.dart';
+import 'package:rxdart/rxdart.dart';
 
 class StockScreen extends StatefulWidget {
   const StockScreen({super.key});
@@ -16,7 +18,6 @@ class StockScreen extends StatefulWidget {
 class _StockScreenState extends State<StockScreen> with SingleTickerProviderStateMixin {
   late TabController _tabController;
   final FirestoreService _firestoreService = FirestoreService();
-
   Product? _selectedProductFilter;
   List<StockItemStatus> _selectedStatusFilters = [];
 
@@ -24,11 +25,8 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    // Adiciona um listener para limpar os filtros ao trocar de aba, evitando confusão
     _tabController.addListener(() {
-      if (_tabController.indexIsChanging) {
-        _clearFilters();
-      }
+      if (_tabController.indexIsChanging) _clearFilters();
     });
   }
 
@@ -62,14 +60,11 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   
   void _showFilterDialog(List<Product> allProducts) async {
     final isAllocatedTab = _tabController.index == 1;
-
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => _FilterDialog(
-        allProducts: allProducts,
-        initialProduct: _selectedProductFilter,
-        initialStatuses: _selectedStatusFilters,
-        isAllocated: isAllocatedTab, // Passa o contexto da aba para o dialog
+        allProducts: allProducts, initialProduct: _selectedProductFilter,
+        initialStatuses: _selectedStatusFilters, isAllocated: isAllocatedTab,
       ),
     );
 
@@ -95,46 +90,40 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
         automaticallyImplyLeading: false,
         title: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: 'Estoque Disponível (Manual)'),
-            Tab(text: 'Estoque Alocado (Pedidos)'),
-          ],
+          tabs: const [Tab(text: 'Estoque Disponível (Manual)'), Tab(text: 'Estoque Alocado (Pedidos)')],
         ),
         actions: [
           if (_selectedProductFilter != null || _selectedStatusFilters.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.filter_alt_off_outlined),
-              tooltip: 'Limpar Filtros',
-              onPressed: _clearFilters,
-            ),
+            IconButton(icon: const Icon(Icons.filter_alt_off_outlined), tooltip: 'Limpar Filtros', onPressed: _clearFilters),
           StreamBuilder<List<Product>>(
             stream: _firestoreService.getProductsStream(),
             builder: (context, snapshot) {
               if (!snapshot.hasData) return const SizedBox();
-              return IconButton(
-                icon: const Icon(Icons.filter_alt_outlined),
-                tooltip: 'Filtrar Estoque',
-                onPressed: () => _showFilterDialog(snapshot.data!),
-              );
+              return IconButton(icon: const Icon(Icons.filter_alt_outlined), tooltip: 'Filtrar Estoque', onPressed: () => _showFilterDialog(snapshot.data!));
             },
           ),
         ],
       ),
-      body: StreamBuilder<List<StockItem>>(
-        stream: _firestoreService.getStockItemsStream(),
+      body: StreamBuilder(
+        stream: Rx.combineLatest2(
+          _firestoreService.getStockItemsStream(),
+          _firestoreService.getOrdersStream(),
+          (List<StockItem> items, List<Order> orders) => {'items': items, 'orders': orders}
+        ),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Erro: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(child: Text('Nenhum item no estoque.'));
-          }
+          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (snapshot.hasError) return Center(child: Text('Erro: ${snapshot.error}'));
+          if (!snapshot.hasData) return const Center(child: Text('Nenhum item no estoque.'));
 
-          List<StockItem> filteredItems = snapshot.data!;
+          final allStockItems = snapshot.data!['items'] as List<StockItem>;
+          final allOrders = snapshot.data!['orders'] as List<Order>;
 
+          final finalizedOrderIds = allOrders
+              .where((order) => order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado)
+              .map((order) => order.id)
+              .toSet();
+
+          List<StockItem> filteredItems = allStockItems;
           if (_selectedProductFilter != null) {
             filteredItems = filteredItems.where((item) => item.productId == _selectedProductFilter!.id).toList();
           }
@@ -143,7 +132,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
           }
 
           final manualStock = filteredItems.where((item) => item.orderId == null).toList();
-          final allocatedStock = filteredItems.where((item) => item.orderId != null).toList();
+          final allocatedStock = filteredItems.where((item) => item.orderId != null && !finalizedOrderIds.contains(item.orderId)).toList();
 
           return TabBarView(
             controller: _tabController,
@@ -159,9 +148,8 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
 
   Widget _buildStockList(List<StockItem> items, {required bool isAllocated}) {
     if (items.isEmpty) {
-      return const Center(child: Text('Nenhum item encontrado com os filtros aplicados.'));
+      return const Center(child: Text('Nenhum item encontrado.'));
     }
-
     final groupedItems = <String, Map<String, dynamic>>{};
     for (var item in items) {
       final key = '${item.productId}_${item.status.name}_${item.logoType}';
@@ -171,7 +159,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
       );
     }
     final groupedList = groupedItems.values.toList();
-
     return ListView.builder(
       padding: const EdgeInsets.all(8),
       itemCount: groupedList.length,
@@ -220,7 +207,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
       case StockItemStatus.entregue: return Colors.blueGrey;
     }
   }
-
   String _getStatusName(StockItemStatus status) {
     switch (status) {
       case StockItemStatus.aguardandoProducao: return 'Aguardando Produção';
@@ -229,7 +215,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
       case StockItemStatus.entregue: return 'Entregue';
     }
   }
-  
   IconData _getStatusIcon(StockItemStatus status) {
     switch (status) {
       case StockItemStatus.aguardandoProducao: return Icons.watch_later_outlined;
@@ -244,7 +229,7 @@ class _FilterDialog extends StatefulWidget {
   final List<Product> allProducts;
   final Product? initialProduct;
   final List<StockItemStatus> initialStatuses;
-  final bool isAllocated; // <-- NOVO PARÂMETRO
+  final bool isAllocated;
 
   const _FilterDialog({
     required this.allProducts,
@@ -270,9 +255,8 @@ class _FilterDialogState extends State<_FilterDialog> {
 
   @override
   Widget build(BuildContext context) {
-    // Define quais status mostrar com base na aba atual
     final availableStatuses = widget.isAllocated
-        ? [StockItemStatus.aguardandoProducao, StockItemStatus.emTransito, StockItemStatus.entregue]
+        ? [StockItemStatus.aguardandoProducao, StockItemStatus.emEstoque, StockItemStatus.emTransito, StockItemStatus.entregue]
         : [StockItemStatus.emEstoque];
 
     return AlertDialog(
@@ -296,7 +280,7 @@ class _FilterDialogState extends State<_FilterDialog> {
             Text('Filtrar por Status:', style: Theme.of(context).textTheme.titleSmall),
             Wrap(
               spacing: 8.0,
-              children: availableStatuses.map((status) { // Usa a lista de status filtrada
+              children: availableStatuses.map((status) {
                 final isSelected = _selectedStatuses.contains(status);
                 return FilterChip(
                   label: Text(_getStatusName(status)),
@@ -317,10 +301,7 @@ class _FilterDialogState extends State<_FilterDialog> {
         ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(), // Cancela sem salvar
-          child: const Text('Cancelar'),
-        ),
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
         ElevatedButton(
           onPressed: () {
             Navigator.of(context).pop({
@@ -334,7 +315,6 @@ class _FilterDialogState extends State<_FilterDialog> {
     );
   }
 
-  // Copiado para cá para ser acessível
   String _getStatusName(StockItemStatus status) {
     switch (status) {
       case StockItemStatus.aguardandoProducao: return 'Aguardando Produção';
