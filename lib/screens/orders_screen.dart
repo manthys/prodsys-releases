@@ -38,6 +38,12 @@ class OrdersScreen extends StatelessWidget {
               final order = orders[index];
               final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? 'N/A';
 
+              // ##### ALTERAÇÃO AQUI: LÓGICA PARA VERIFICAR O REEMBOLSO #####
+              final bool needsRefund =
+                  order.notes?.contains('Valor a devolver ao cliente:') == true &&
+                  order.status != OrderStatus.finalizado &&
+                  order.status != OrderStatus.cancelado;
+
               return Card(
                 elevation: 2.0,
                 margin: const EdgeInsets.symmetric(vertical: 8.0),
@@ -51,12 +57,29 @@ class OrdersScreen extends StatelessWidget {
                     ),
                   ),
                   title: Text(
-                    '${order.clientName} - Pedido #$orderIdShort',
-                    style: const TextStyle(fontWeight: FontWeight.bold)
+                      '${order.clientName} - Pedido #$orderIdShort',
+                      style: const TextStyle(fontWeight: FontWeight.bold)
                   ),
-                  subtitle: Text(
-                      'Data: ${DateFormat('dd/MM/yyyy').format(order.creationDate.toDate())}\n'
-                      'Status: ${_getStatusName(order.status)}'),
+                  // ##### ALTERAÇÃO AQUI: ATUALIZA O SUBTÍTULO PARA MOSTRAR O SELO #####
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          'Data: ${DateFormat('dd/MM/yyyy').format(order.creationDate.toDate())}\n'
+                          'Status: ${_getStatusName(order.status)}'),
+                      if (needsRefund)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4.0),
+                          child: Chip(
+                            label: const Text('Reembolso Pendente', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                            backgroundColor: Colors.orange.shade100,
+                            side: BorderSide(color: Colors.orange.shade300),
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                          ),
+                        ),
+                    ],
+                  ),
                   trailing: Text(
                     currencyFormatter.format(order.finalAmount),
                     style: const TextStyle(
@@ -85,7 +108,6 @@ Color _getStatusColor(OrderStatus status) {
     case OrderStatus.cotacao: return Colors.blueGrey;
     case OrderStatus.pedido: return Colors.orange;
     case OrderStatus.emFabricacao: return Colors.blue;
-    // NOVO CASO ADICIONADO
     case OrderStatus.aguardandoEntrega: return Colors.purple; 
     case OrderStatus.finalizado: return Colors.green;
     case OrderStatus.cancelado: return Colors.red;
@@ -97,7 +119,6 @@ String _getStatusName(OrderStatus status) {
     case OrderStatus.cotacao: return 'Cotação';
     case OrderStatus.pedido: return 'Pedido';
     case OrderStatus.emFabricacao: return 'Em Fabricação';
-    // NOVO CASO ADICIONADO
     case OrderStatus.aguardandoEntrega: return 'Aguardando Entrega'; 
     case OrderStatus.finalizado: return 'Finalizado';
     case OrderStatus.cancelado: return 'Cancelado';

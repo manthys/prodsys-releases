@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/delivery_model.dart';
 import '../models/order_model.dart';
+import '../models/order_item_model.dart';
 import '../models/stock_item_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
@@ -74,12 +75,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     _showSnackBar('Cotação convertida em Pedido! Aguardando pagamento do sinal.');
     _reloadOrder();
   }
+
   void _cancelarPedido() async {
     final bool? confirmar = await showDialog(context: context, builder: (context) => AlertDialog(title: const Text('Confirmar Cancelamento'), content: const Text('Tem certeza que deseja cancelar este pedido? Os itens de produção associados serão excluídos.'), actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Não')), ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), child: const Text('Sim, Cancelar'))]));
     if (confirmar == true) {
       try {
         await _firestoreService.updateOrderStatus(_currentOrder.id!, OrderStatus.cancelado);
-        await _firestoreService.deleteStockItemsForOrder(_currentOrder.id!);
+        await _firestoreService.handleOrderCancellation(_currentOrder.id!);
         _showSnackBar('Pedido cancelado e itens de produção removidos.');
         _reloadOrder();
       } catch (e) {
@@ -87,26 +89,68 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       }
     }
   }
+
   Future<void> _confirmInitialPayment() async {
+    final groupedStock = await _firestoreService.findAvailableStockForOrder(_currentOrder);
+    if (!mounted) return;
+    
+    final allOrders = await _firestoreService.getOrdersStream().first;
+    if (!mounted) return;
+    
+    List<StockItem> chosenItems = [];
+
+    if (groupedStock.stockByOrderId.isNotEmpty) {
+      final List<StockItem>? result = await showDialog<List<StockItem>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => _AllocationDialog(
+          groupedStock: groupedStock.stockByOrderId,
+          allOrders: allOrders,
+          neededItems: _currentOrder.items,
+        ),
+      );
+
+      if (result == null) {
+        _showSnackBar('Alocação cancelada pelo usuário.', isError: true);
+        return;
+      }
+      chosenItems = result;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _showPaymentDialog(chosenItems);
+      }
+    });
+  }
+
+  Future<void> _showPaymentDialog(List<StockItem> chosenItems) async {
     PlatformFile? pickedFile;
     int paymentOption = 0;
-    final bool? confirmed = await showDialog<bool>(context: context, builder: (context) {
-      return StatefulBuilder(builder: (context, setDialogState) {
-        return AlertDialog(title: const Text('Confirmar Pagamento e Iniciar Produção'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Selecione o valor pago:'), RadioListTile<int>(title: const Text('Sinal (50%)'), value: 0, groupValue: paymentOption, onChanged: (value) => setDialogState(() => paymentOption = value!)), RadioListTile<int>(title: const Text('Valor Integral (100%)'), value: 1, groupValue: paymentOption, onChanged: (value) => setDialogState(() => paymentOption = value!)), const Divider(), const SizedBox(height: 16), const Text('Deseja anexar um comprovante? (Opcional)'), const SizedBox(height: 8), Center(child: ElevatedButton.icon(icon: const Icon(Icons.attach_file), label: const Text('Anexar'), onPressed: () async {
-          final result = await FilePicker.platform.pickFiles();
-          if (result != null) setDialogState(() => pickedFile = result.files.first);
-        })), if (pickedFile != null) Padding(padding: const EdgeInsets.only(top: 8.0), child: Center(child: Text('Arquivo: ${pickedFile!.name}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))))])), actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')), ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Confirmar'))]);
-      });
-    });
-    if (confirmed != true) return;
-    final isFullPayment = paymentOption == 1;
-    final double amountToConfirm = isFullPayment ? _currentOrder.finalAmount : (_currentOrder.finalAmount / 2);
-    final PaymentStatus newPaymentStatus = isFullPayment ? PaymentStatus.pagoIntegralmente : PaymentStatus.sinalPago;
-    final String successMessage = isFullPayment ? 'Pagamento integral confirmado!' : 'Sinal confirmado!';
+
+    final bool? confirmedPayment = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(builder: (context, setDialogState) {
+          return AlertDialog(title: const Text('Confirmar Pagamento e Iniciar Produção'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [const Text('Selecione o valor pago:'), RadioListTile<int>(title: const Text('Sinal (50%)'), value: 0, groupValue: paymentOption, onChanged: (value) => setDialogState(() => paymentOption = value!)), RadioListTile<int>(title: const Text('Valor Integral (100%)'), value: 1, groupValue: paymentOption, onChanged: (value) => setDialogState(() => paymentOption = value!)), const Divider(), const SizedBox(height: 16), const Text('Deseja anexar um comprovante? (Opcional)'), const SizedBox(height: 8), Center(child: ElevatedButton.icon(icon: const Icon(Icons.attach_file), label: const Text('Anexar'), onPressed: () async {
+            final result = await FilePicker.platform.pickFiles();
+            if (result != null) setDialogState(() => pickedFile = result.files.first);
+          })), if (pickedFile != null) Padding(padding: const EdgeInsets.only(top: 8.0), child: Center(child: Text('Arquivo: ${pickedFile!.name}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))))])), actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')), ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Confirmar'))]);
+        });
+      },
+    );
+
+    if (confirmedPayment != true) return;
+    
     setState(() => _isUploading = true);
+    
     try {
+      final isFullPayment = paymentOption == 1;
+      final double amountToConfirm = isFullPayment ? _currentOrder.finalAmount : (_currentOrder.finalAmount / 2);
+      final PaymentStatus newPaymentStatus = isFullPayment ? PaymentStatus.pagoIntegralmente : PaymentStatus.sinalPago;
       final Map<String, dynamic> dataToUpdate = {'amountPaid': amountToConfirm, 'paymentStatus': newPaymentStatus.name, 'status': OrderStatus.emFabricacao.name, 'confirmationDate': Timestamp.now()};
       await _firestoreService.updateOrderPayment(_currentOrder.id!, dataToUpdate);
+      
       if (pickedFile != null && pickedFile!.path != null) {
         final file = File(pickedFile!.path!);
         final ref = FirebaseStorage.instance.ref('payment_proofs/${_currentOrder.id}/${DateTime.now().millisecondsSinceEpoch}_${pickedFile!.name}');
@@ -114,16 +158,25 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         final downloadUrl = await uploadTask.ref.getDownloadURL();
         await _firestoreService.addAttachmentUrlToOrder(_currentOrder.id!, downloadUrl);
       }
+      
       final updatedOrder = await _firestoreService.getOrderById(_currentOrder.id!);
-      if (updatedOrder != null) await _firestoreService.createStockItemsForOrder(updatedOrder);
-      _showSnackBar('$successMessage Itens enviados para produção.');
+      if (updatedOrder == null) throw Exception("Pedido não encontrado após atualização.");
+
+      await _firestoreService.processSmartAllocationForOrder(
+        updatedOrder, 
+        chosenItems,
+      );
+
+      _showSnackBar('Pagamento confirmado! Estoque alocado e itens enviados para produção.');
       _reloadOrder();
+
     } catch (e) {
-      _showSnackBar('Erro: $e', isError: true);
+      _showSnackBar('Erro no processo: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }
   }
+
   Future<void> _confirmFinalPayment() async {
     PlatformFile? pickedFile;
     final bool? confirmed = await showDialog<bool>(context: context, builder: (context) {
@@ -148,11 +201,39 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       _showSnackBar("Pagamento final confirmado!");
       _reloadOrder();
     } catch (e) {
-       _showSnackBar('Erro: $e', isError: true);
+        _showSnackBar('Erro: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }
   }
+  
+  Future<void> _confirmRefund() async {
+    final bool? confirmar = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirmar Devolução'),
+        content: const Text('Tem certeza que deseja marcar o reembolso deste pedido como concluído? Esta ação irá registrar a devolução e tentar finalizar o pedido se todas as outras condições estiverem cumpridas.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Sim, Confirmar'),
+          )
+        ],
+      ),
+    );
+    if (confirmar != true) return;
+
+    try {
+      await _firestoreService.confirmRefundAndFinalizeOrder(_currentOrder.id!);
+      _showSnackBar('Reembolso confirmado e status do pedido atualizado!');
+    } catch (e) {
+      _showSnackBar('Erro ao confirmar reembolso: $e', isError: true);
+    } finally {
+      _reloadOrder();
+    }
+  }
+
   void _navigateToEditScreen() async {
     final result = await Navigator.of(context).push<Order>(MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: _currentOrder)));
     if (result != null && mounted) setState(() => _currentOrder = result);
@@ -211,7 +292,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
-  // FUNÇÃO PARA FORÇAR A VERIFICAÇÃO (PARA CORRIGIR PEDIDOS ANTIGOS)
   void _forceRecheckStatus() async {
     await _firestoreService.checkIfOrderIsFullyCompleted(_currentOrder.id!);
     _showSnackBar('Verificação de status concluída.');
@@ -220,7 +300,21 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   
   @override
   Widget build(BuildContext context) {
-    final bool canBeEdited = _currentOrder.status == OrderStatus.cotacao || _currentOrder.status == OrderStatus.pedido;
+    final bool canBeEdited = _currentOrder.status == OrderStatus.cotacao || 
+        _currentOrder.status == OrderStatus.pedido || 
+        _currentOrder.status == OrderStatus.emFabricacao;
+
+    // ##### LÓGICA PARA AS NOVAS INFORMAÇÕES VISUAIS #####
+    final bool needsRefund = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true;
+    String? refundAmountString;
+    if (needsRefund) {
+      final regex = RegExp(r'Valor a devolver ao cliente: (R\$\d+\,\d{2})');
+      final match = regex.firstMatch(_currentOrder.notes!);
+      if (match != null) {
+        refundAmountString = match.group(1);
+      }
+    }
+        
     return Scaffold(
       appBar: AppBar(
         title: Text('Detalhes #${_currentOrder.id?.substring(0, 6).toUpperCase() ?? ''}'),
@@ -231,29 +325,91 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           if (canBeEdited) IconButton(icon: const Icon(Icons.edit), tooltip: 'Editar Pedido', onPressed: _navigateToEditScreen),
           IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Gerar PDF do Pedido', onPressed: _generateOrderPdf),
           if (_currentOrder.status != OrderStatus.cotacao && _currentOrder.status != OrderStatus.cancelado)
-            IconButton(icon: const Icon(Icons.local_shipping_outlined), tooltip: 'Histórico de Entregas', onPressed: () async {
-              final client = await _firestoreService.getClientById(_currentOrder.clientId);
-              final companySettings = await _firestoreService.getCompanySettings();
-              if (client != null && mounted) {
-                Navigator.of(context).push(MaterialPageRoute(builder: (context) => DeliveryHistoryScreen(order: _currentOrder, client: client, companySettings: companySettings)));
+            IconButton(
+              icon: const Icon(Icons.local_shipping_outlined), 
+              tooltip: 'Histórico de Entregas', 
+              onPressed: () async {
+                final client = await _firestoreService.getClientById(_currentOrder.clientId);
+                final companySettings = await _firestoreService.getCompanySettings();
+                if (client != null && mounted) {
+                  await Navigator.of(context).push(MaterialPageRoute(builder: (context) => DeliveryHistoryScreen(order: _currentOrder, client: client, companySettings: companySettings)));
+                  _reloadOrder();
+                }
               }
-            }),
+            ),
           if (_currentOrder.status == OrderStatus.cotacao) IconButton(icon: const Icon(Icons.delete), tooltip: 'Excluir Cotação', onPressed: _confirmarExclusao),
           if (_currentOrder.status != OrderStatus.finalizado && _currentOrder.status != OrderStatus.cancelado) IconButton(icon: const Icon(Icons.cancel), tooltip: 'Cancelar Pedido', onPressed: _cancelarPedido),
           const SizedBox(width: 8),
         ],
       ),
       body: SingleChildScrollView(padding: const EdgeInsets.all(16.0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _buildClientInfoSection(), const SizedBox(height: 24), _buildItemsSection(), const Divider(), _buildTotalsSection(), const SizedBox(height: 24), _buildNotesSection(), _buildAttachmentsSection(), const SizedBox(height: 32),
+        _buildClientInfoSection(needsRefund: needsRefund), // Passa a informação para o widget
+        // ##### ALTERAÇÃO 2: NOVO BANNER DE DESTAQUE #####
+        if (needsRefund)
+          Padding(
+            padding: const EdgeInsets.only(top: 16.0),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200)
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Atenção: Este pedido requer o processamento de um reembolso de ${refundAmountString ?? "valor não especificado"}.',
+                      style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        const SizedBox(height: 24), 
+        _buildItemsSection(), 
+        const Divider(), 
+        _buildTotalsSection(), 
+        const SizedBox(height: 24), 
+        _buildNotesSection(), 
+        _buildAttachmentsSection(), 
+        const SizedBox(height: 32),
         if (_isUploading) const Center(child: Padding(padding: EdgeInsets.all(16.0), child: CircularProgressIndicator()))
         else _buildActionButtons(),
       ])),
     );
   }
   
-  Widget _buildClientInfoSection() {
+  Widget _buildClientInfoSection({required bool needsRefund}) {
     final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Cliente: ${_currentOrder.clientName}', style: Theme.of(context).textTheme.titleLarge), const SizedBox(height: 8), Text('Data: ${dateFormatter.format(_currentOrder.creationDate.toDate())}'), Text('Criado por: ${_currentOrder.createdByUserName}'), const SizedBox(height: 8), Row(children: [Text('Status: ', style: Theme.of(context).textTheme.bodyLarge), Chip(label: Text(_getStatusName(_currentOrder.status), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), backgroundColor: _getStatusColor(_currentOrder.status), padding: const EdgeInsets.symmetric(horizontal: 8))])]);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text('Cliente: ${_currentOrder.clientName}', style: Theme.of(context).textTheme.titleLarge), 
+      const SizedBox(height: 8), 
+      Text('Data: ${dateFormatter.format(_currentOrder.creationDate.toDate())}'), 
+      Text('Criado por: ${_currentOrder.createdByUserName}'), 
+      const SizedBox(height: 8), 
+      Row(children: [
+        Text('Status: ', style: Theme.of(context).textTheme.bodyLarge), 
+        Chip(
+          label: Text(_getStatusName(_currentOrder.status), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), 
+          backgroundColor: _getStatusColor(_currentOrder.status), 
+          padding: const EdgeInsets.symmetric(horizontal: 8)
+        ),
+        // ##### ALTERAÇÃO 1: NOVO SELO DE STATUS #####
+        if(needsRefund) ...[
+          const SizedBox(width: 8),
+          Chip(
+            label: const Text('Reembolso Pendente', style: TextStyle(fontWeight: FontWeight.bold)),
+            backgroundColor: Colors.orange.shade100,
+            side: BorderSide(color: Colors.orange.shade300),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+        ]
+      ])
+    ]);
   }
   Widget _buildItemsSection() {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
@@ -280,6 +436,26 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }).toList())), const SizedBox(height: 24)]);
   }
   Widget _buildActionButtons() {
+    final bool needsRefundConfirmation = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true &&
+                                         _currentOrder.status != OrderStatus.finalizado &&
+                                         _currentOrder.status != OrderStatus.cancelado;
+
+    if (needsRefundConfirmation) {
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          icon: const Icon(Icons.undo_rounded),
+          label: const Text('Confirmar Devolução e Finalizar'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.teal,
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 16)
+          ),
+          onPressed: _confirmRefund,
+        ),
+      );
+    }
+    
     if (_currentOrder.status == OrderStatus.cotacao) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.check_circle), label: const Text('Converter em Pedido'), style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _converterParaPedido));
     if (_currentOrder.status == OrderStatus.pedido && _currentOrder.paymentStatus == PaymentStatus.aguardandoSinal) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento'), style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmInitialPayment));
     if (_currentOrder.status == OrderStatus.aguardandoEntrega) {
@@ -312,5 +488,118 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       case OrderStatus.finalizado: return 'Finalizado';
       case OrderStatus.cancelado: return 'Cancelado';
     }
+  }
+}
+
+class _AllocationDialog extends StatefulWidget {
+  final Map<String, List<StockItem>> groupedStock;
+  final List<Order> allOrders;
+  final List<OrderItem> neededItems;
+
+  const _AllocationDialog({
+    required this.groupedStock,
+    required this.allOrders,
+    required this.neededItems,
+  });
+
+  @override
+  State<_AllocationDialog> createState() => _AllocationDialogState();
+}
+
+class _AllocationDialogState extends State<_AllocationDialog> {
+  final Map<String, bool> _sourceSelection = {};
+  late Map<String, int> _neededQty;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.groupedStock.keys.forEach((key) {
+      _sourceSelection[key] = true;
+    });
+    _calculateNeeded();
+  }
+
+  void _calculateNeeded() {
+    _neededQty = {
+      for (var item in widget.neededItems) '${item.productId}-${item.logoType}': item.quantity
+    };
+  }
+
+  List<StockItem> _getSelectedItems() {
+    final selected = <StockItem>[];
+    final tempNeeded = Map<String, int>.from(_neededQty);
+
+    final List<String> sourceKeys = widget.groupedStock.keys.toList();
+    sourceKeys.sort((a, b) {
+      if (a == 'general') return -1;
+      if (b == 'general') return 1;
+      return a.compareTo(b);
+    });
+
+    for(final sourceKey in sourceKeys) {
+      if (_sourceSelection[sourceKey] == true) {
+        for (final item in widget.groupedStock[sourceKey]!) {
+          final itemKey = '${item.productId}-${item.logoType}';
+          if ((tempNeeded[itemKey] ?? 0) > 0) {
+            selected.add(item);
+            tempNeeded[itemKey] = tempNeeded[itemKey]! - 1;
+          }
+        }
+      }
+    }
+    return selected;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Alocação Inteligente de Estoque'),
+      content: SizedBox(
+        width: 500,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Selecione as fontes de estoque que deseja usar:'),
+              const SizedBox(height: 8),
+              ...widget.groupedStock.keys.map((orderId) {
+                final items = widget.groupedStock[orderId]!;
+                final order = orderId == 'general' 
+                  ? null 
+                  : widget.allOrders.firstWhere((o) => o.id == orderId, orElse: () => widget.allOrders.first);
+                
+                final title = orderId == 'general'
+                  ? 'Estoque Geral (${items.length} un.)'
+                  : 'Pedido #${orderId.substring(0,6).toUpperCase()} (${order?.clientName}) - ${items.length} un.';
+
+                return CheckboxListTile(
+                  title: Text(title),
+                  value: _sourceSelection[orderId],
+                  onChanged: (value) {
+                    setState(() {
+                      _sourceSelection[orderId] = value ?? false;
+                    });
+                  },
+                );
+              }).toList(),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(null), child: const Text('Cancelar')),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.of(context).pop(_getSelectedItems());
+          },
+          child: const Text('Confirmar e Alocar'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(<StockItem>[]),
+          child: const Text('Produzir do Zero'),
+        ),
+      ],
+    );
   }
 }

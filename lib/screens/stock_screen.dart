@@ -1,7 +1,7 @@
-// lib/screens/stock_screen.dart
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import '../models/order_item_model.dart';
 import '../models/order_model.dart';
 import '../models/product_model.dart';
 import '../models/stock_item_model.dart';
@@ -21,6 +21,9 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   Product? _selectedProductFilter;
   List<StockItemStatus> _selectedStatusFilters = [];
 
+  // Variável para forçar a reconstrução do StreamBuilder
+  final BehaviorSubject<void> _reloadSubject = BehaviorSubject<void>();
+
   @override
   void initState() {
     super.initState();
@@ -33,6 +36,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   @override
   void dispose() {
     _tabController.dispose();
+    _reloadSubject.close(); // Fechar o subject para evitar memory leaks
     super.dispose();
   }
 
@@ -83,6 +87,177 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     });
   }
 
+  void _showManualAllocationDialog(StockItem stockItem, int maxQuantity) async {
+    final allOrders = await _firestoreService.getOrdersStream().first;
+    final List<Order> candidateOrders = [];
+
+    for (final order in allOrders) {
+      if (order.status == OrderStatus.emFabricacao) {
+        if (order.items.any((orderItem) => 
+            orderItem.productId == stockItem.productId && 
+            orderItem.logoType == stockItem.logoType &&
+            orderItem.remainingQuantity > 0)) {
+          candidateOrders.add(order);
+        }
+      }
+    }
+
+    if (candidateOrders.isEmpty && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Nenhum pedido na fila de produção precisa deste item no momento.'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    final formKey = GlobalKey<FormState>();
+    Order? selectedOrder;
+    final qtyController = TextEditingController(text: maxQuantity.toString());
+
+    final Map<String, dynamic>? result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Alocar ${stockItem.productName}'),
+          content: Form(
+            key: formKey,
+            child: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Selecione o pedido de destino para este item:'),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<Order>(
+                    hint: const Text('Escolha um pedido...'),
+                    isExpanded: true,
+                    items: candidateOrders.map((order) {
+                      final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? 'N/A';
+                      return DropdownMenuItem<Order>(
+                        value: order,
+                        child: Text('Pedido #$orderIdShort - ${order.clientName}', overflow: TextOverflow.ellipsis),
+                      );
+                    }).toList(),
+                    onChanged: (value) {
+                      selectedOrder = value;
+                    },
+                    validator: (value) => selectedOrder == null ? 'Selecione um pedido' : null,
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: qtyController,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: InputDecoration(
+                      labelText: 'Quantidade a Alocar',
+                      hintText: 'Máx: $maxQuantity',
+                    ),
+                    validator: (value) {
+                      if (value == null || value.isEmpty) return 'Obrigatório';
+                      final qty = int.tryParse(value);
+                      if (qty == null || qty <= 0) return 'Inválido';
+                      if (qty > maxQuantity) return 'Máximo é $maxQuantity';
+                      return null;
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
+            ElevatedButton(
+              onPressed: () {
+                if (formKey.currentState!.validate()) {
+                  formKey.currentState!.save();
+                  Navigator.of(context).pop({
+                    'order': selectedOrder,
+                    'quantity': int.parse(qtyController.text)
+                  });
+                }
+              },
+              child: const Text('Alocar'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (result != null && mounted) {
+      final Order order = result['order'];
+      final int quantity = result['quantity'];
+      
+      await _firestoreService.reallocateStockItem(
+        stockItemToMove: stockItem, 
+        targetOrder: order, 
+        quantity: quantity
+      );
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$quantity item(ns) alocados para o Pedido #${order.id?.substring(0,6).toUpperCase()} com sucesso!'), backgroundColor: Colors.green),
+      );
+      
+      // Força a recarga da tela
+      _reloadSubject.add(null);
+    }
+  }
+  
+  void _showDeallocateDialog(StockItem stockItem, int maxQuantity) async {
+    final qtyController = TextEditingController(text: maxQuantity.toString());
+    final formKey = GlobalKey<FormState>();
+
+    final int? quantityToDeallocate = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Devolver ${stockItem.productName} ao Estoque Geral'),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            controller: qtyController,
+            keyboardType: TextInputType.number,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            decoration: InputDecoration(
+              labelText: 'Quantidade a Devolver',
+              hintText: 'Máx: $maxQuantity',
+            ),
+            validator: (value) {
+              if (value == null || value.isEmpty) return 'Obrigatório';
+              final qty = int.tryParse(value);
+              if (qty == null || qty <= 0) return 'Inválido';
+              if (qty > maxQuantity) return 'Máximo é $maxQuantity';
+              return null;
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
+          ElevatedButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.of(context).pop(int.parse(qtyController.text));
+              }
+            },
+            child: const Text('Confirmar Devolução'),
+          ),
+        ],
+      ),
+    );
+
+    if (quantityToDeallocate != null && mounted) {
+      await _firestoreService.deallocateStockItems(
+        stockItemToDeallocate: stockItem, 
+        quantity: quantityToDeallocate
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$quantityToDeallocate item(ns) devolvidos ao estoque geral.'), backgroundColor: Colors.orange),
+      );
+
+      // Força a recarga da tela
+      _reloadSubject.add(null);
+    }
+  }
+
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -90,9 +265,20 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
         automaticallyImplyLeading: false,
         title: TabBar(
           controller: _tabController,
-          tabs: const [Tab(text: 'Estoque Disponível (Manual)'), Tab(text: 'Estoque Alocado (Pedidos)')],
+          tabs: const [Tab(text: 'Estoque Disponível (Geral)'), Tab(text: 'Estoque Alocado (Pedidos)')],
         ),
         actions: [
+          // ##### NOVO BOTÃO DE RECARREGAR #####
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Recarregar Lista',
+            onPressed: () {
+              _reloadSubject.add(null);
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Lista de estoque atualizada.'), duration: Duration(seconds: 1)),
+              );
+            },
+          ),
           if (_selectedProductFilter != null || _selectedStatusFilters.isNotEmpty)
             IconButton(icon: const Icon(Icons.filter_alt_off_outlined), tooltip: 'Limpar Filtros', onPressed: _clearFilters),
           StreamBuilder<List<Product>>(
@@ -105,10 +291,12 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
         ],
       ),
       body: StreamBuilder(
-        stream: Rx.combineLatest2(
+        // O StreamBuilder agora escuta a combinação dos streams e do nosso gatilho de recarga
+        stream: Rx.combineLatest3(
           _firestoreService.getStockItemsStream(),
           _firestoreService.getOrdersStream(),
-          (List<StockItem> items, List<Order> orders) => {'items': items, 'orders': orders}
+          _reloadSubject.stream.startWith(null), // startWith(null) garante que o stream emita um valor inicial
+          (List<StockItem> items, List<Order> orders, _) => {'items': items, 'orders': orders}
         ),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -137,8 +325,8 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
           return TabBarView(
             controller: _tabController,
             children: [
-              _buildStockList(manualStock, isAllocated: false),
-              _buildStockList(allocatedStock, isAllocated: true),
+              _buildStockList(manualStock),
+              _buildStockList(allocatedStock),
             ],
           );
         },
@@ -146,16 +334,19 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildStockList(List<StockItem> items, {required bool isAllocated}) {
+  Widget _buildStockList(List<StockItem> items) {
     if (items.isEmpty) {
       return const Center(child: Text('Nenhum item encontrado.'));
     }
     final groupedItems = <String, Map<String, dynamic>>{};
     for (var item in items) {
-      final key = '${item.productId}_${item.status.name}_${item.logoType}';
+      final key = '${item.productId}_${item.status.name}_${item.logoType}_${item.orderId}';
       groupedItems.update(
-        key, (value) { value['count'] = (value['count'] as int) + 1; return value; },
-        ifAbsent: () => {'item': item, 'count': 1},
+        key, (value) { 
+          (value['items'] as List<StockItem>).add(item);
+          return value; 
+        },
+        ifAbsent: () => {'item': item, 'items': [item]},
       );
     }
     final groupedList = groupedItems.values.toList();
@@ -164,14 +355,15 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
       itemCount: groupedList.length,
       itemBuilder: (context, index) {
         final group = groupedList[index];
-        return _buildStockCard(context, group, isAllocated: isAllocated);
+        return _buildStockCard(context, group);
       },
     );
   }
 
-  Widget _buildStockCard(BuildContext context, Map<String, dynamic> group, {required bool isAllocated}) {
+  Widget _buildStockCard(BuildContext context, Map<String, dynamic> group) {
     final StockItem item = group['item'];
-    final int count = group['count'];
+    final int count = (group['items'] as List<StockItem>).length;
+    final bool canBeReallocated = item.status == StockItemStatus.emEstoque;
     
     return Card(
       child: ListTile(
@@ -181,17 +373,45 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
           child: Tooltip(message: _getStatusName(item.status), child: Icon(_getStatusIcon(item.status))),
         ),
         title: Text('${item.sku} - ${item.productName}', style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text('Status: ${_getStatusName(item.status)} | Logo: ${item.logoType}\nPedido: ${isAllocated ? ('#' + (item.orderId?.substring(0, 6).toUpperCase() ?? '')) : 'Estoque Manual'}'),
+        subtitle: Text('Status: ${_getStatusName(item.status)} | Logo: ${item.logoType}\nPedido: ${item.orderId != null ? ('#' + (item.orderId?.substring(0, 6).toUpperCase() ?? '')) : 'Estoque Geral'}'),
         isThreeLine: true,
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (canBeReallocated)
+              PopupMenuButton<String>(
+                onSelected: (value) {
+                  if (value == 'allocate') {
+                    _showManualAllocationDialog(item, count);
+                  } else if (value == 'deallocate') {
+                    _showDeallocateDialog(item, count);
+                  }
+                },
+                itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                  const PopupMenuItem<String>(
+                    value: 'allocate',
+                    child: ListTile(leading: Icon(Icons.redo, color: Colors.blue), title: Text('Alocar para Pedido')),
+                  ),
+                  if (item.orderId != null)
+                    const PopupMenuItem<String>(
+                      value: 'deallocate',
+                      child: ListTile(leading: Icon(Icons.undo, color: Colors.orange), title: Text('Devolver ao Geral')),
+                    ),
+                ],
+                icon: const Icon(Icons.more_vert),
+              ),
             Text('${count.toString()} un.', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
             const SizedBox(width: 8),
             IconButton(
               icon: const Icon(Icons.build_circle_outlined, color: Colors.grey),
               tooltip: 'Ajustar Quantidade',
-              onPressed: () => _showAdjustmentDialog(group),
+              onPressed: () {
+                final adjustmentGroup = {
+                  'item': item,
+                  'count': count,
+                };
+                _showAdjustmentDialog(adjustmentGroup);
+              },
             )
           ],
         ),

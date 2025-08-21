@@ -2,7 +2,6 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// ENUM ATUALIZADO
 enum StockItemStatus { aguardandoProducao, emEstoque, emTransito, entregue }
 
 class StockItem {
@@ -16,7 +15,8 @@ class StockItem {
   final String logoType;
   final Timestamp creationDate;
   final Timestamp? deliveryDeadline;
-  final String? deliveryId; // <-- NOVO CAMPO para vincular à entrega
+  final String? deliveryId;
+  final String? reallocatedFrom; // <-- NOVO CAMPO
 
   StockItem({
     this.id,
@@ -29,7 +29,8 @@ class StockItem {
     required this.logoType,
     required this.creationDate,
     this.deliveryDeadline,
-    this.deliveryId, // <-- NOVO CAMPO
+    this.deliveryId,
+    this.reallocatedFrom, // <-- NOVO CAMPO
   });
 
   Map<String, dynamic> toJson() {
@@ -43,7 +44,8 @@ class StockItem {
       'logoType': logoType,
       'creationDate': creationDate,
       'deliveryDeadline': deliveryDeadline,
-      'deliveryId': deliveryId, // <-- NOVO CAMPO
+      'deliveryId': deliveryId,
+      'reallocatedFrom': reallocatedFrom, // <-- NOVO CAMPO
     };
   }
 
@@ -62,7 +64,8 @@ class StockItem {
       logoType: data['logoType'] ?? 'Nenhum',
       creationDate: data['creationDate'] ?? Timestamp.now(),
       deliveryDeadline: data['deliveryDeadline'],
-      deliveryId: data['deliveryId'], // <-- NOVO CAMPO
+      deliveryId: data['deliveryId'],
+      reallocatedFrom: data['reallocatedFrom'], // <-- NOVO CAMPO
     );
   }
 }

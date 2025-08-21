@@ -103,7 +103,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     _notesController.text = order.notes ?? '';
     _paymentMethod = order.paymentMethod;
     _orderItems.clear();
-    _orderItems.addAll(order.items);
+    _orderItems.addAll(order.items.map((item) => item.copyWith())); // Copia para evitar modificar a lista original
     _updateDeliveryAddressFields(order.deliveryAddress);
     _calculateTotal();
     if (_orderItems.isNotEmpty) _updateDeliveryDateEstimate();
@@ -206,6 +206,9 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
         final qty = int.tryParse(qtyController.text) ?? 0;
         if (qty > 0) {
           setState(() {
+            // =================================================================
+            // CORREÇÃO AQUI: ADICIONADO includesLid
+            // =================================================================
             _orderItems.add(OrderItem(productId: product.id!, sku: product.sku, productName: product.name, quantity: qty, finalUnitPrice: calculateFinalPrice(), logoType: logoType, includesLid: false));
             _calculateTotal();
           });
@@ -216,6 +219,37 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     }));
   }
   
+  void _editOrderItem(int index) {
+    final currentItem = _orderItems[index];
+    final product = _allProducts.firstWhere((p) => p.id == currentItem.productId);
+    
+    final qtyController = TextEditingController(text: currentItem.quantity.toString());
+    String logoType = currentItem.logoType;
+
+    showDialog(context: context, builder: (context) => StatefulBuilder(builder: (context, setDialogState) {
+      double calculateFinalPrice() {
+        double finalPrice = product.basePrice;
+        if (logoType == 'Cliente') finalPrice += product.clientLogoPrice;
+        return finalPrice;
+      }
+      return AlertDialog(title: Text('Editar ${product.name}'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [TextField(controller: qtyController, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly], decoration: const InputDecoration(labelText: 'Quantidade'), autofocus: true), const SizedBox(height: 16), Text('Logomarca:', style: Theme.of(context).textTheme.bodyMedium), RadioListTile<String>(title: const Text('Nenhuma'), value: 'Nenhum', groupValue: logoType, onChanged: (value) => setDialogState(() => logoType = value!), contentPadding: EdgeInsets.zero), RadioListTile<String>(title: const Text('Logomarca da Empresa'), value: 'Própria', groupValue: logoType, onChanged: (value) => setDialogState(() => logoType = value!), contentPadding: EdgeInsets.zero), RadioListTile<String>(title: Text('Logomarca do Cliente (+ ${_currencyFormatter.format(product.clientLogoPrice)})'), value: 'Cliente', groupValue: logoType, onChanged: (value) => setDialogState(() => logoType = value!), contentPadding: EdgeInsets.zero), const Divider(), const SizedBox(height: 8), Text('Preço Unitário Final: ${_currencyFormatter.format(calculateFinalPrice())}', style: const TextStyle(fontWeight: FontWeight.bold))])), actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')), ElevatedButton(onPressed: () {
+        final qty = int.tryParse(qtyController.text) ?? 0;
+        if (qty > 0) {
+          setState(() {
+            _orderItems[index] = currentItem.copyWith(
+              quantity: qty,
+              logoType: logoType,
+              finalUnitPrice: calculateFinalPrice()
+            );
+            _calculateTotal();
+          });
+          _updateDeliveryDateEstimate();
+          Navigator.of(context).pop();
+        }
+      }, child: const Text('Salvar'))]);
+    }));
+  }
+
   void _removeItem(int index) {
     setState(() {
       _orderItems.removeAt(index);
@@ -271,14 +305,24 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     }
     if (_formKey.currentState!.validate() && _selectedClient != null && _orderItems.isNotEmpty) {
       final deliveryAddress = Address(cep: _deliveryCepController.text, street: _deliveryStreetController.text, neighborhood: _deliveryNeighborhoodController.text, city: _deliveryCityController.text, state: _deliveryStateController.text);
+      
       if (_isEditing) {
-        final updatedOrder = widget.existingOrder!.copyWith(
+        final originalOrder = widget.existingOrder!;
+        final updatedOrderData = originalOrder.copyWith(
           clientId: _selectedClient!.id!, clientName: _selectedClient!.name, items: _orderItems,
           totalItemsAmount: _totalItemsAmount, shippingCost: _shippingCost, discount: _discount, finalAmount: _finalAmount,
-          notes: _notesController.text, paymentMethod: _paymentMethod, deliveryAddress: deliveryAddress, deliveryDate: _estimatedDeliveryDate != null ? Timestamp.fromDate(_estimatedDeliveryDate!) : widget.existingOrder!.deliveryDate,
+          notes: _notesController.text, paymentMethod: _paymentMethod, deliveryAddress: deliveryAddress, deliveryDate: _estimatedDeliveryDate != null ? Timestamp.fromDate(_estimatedDeliveryDate!) : originalOrder.deliveryDate,
         );
-        await _firestoreService.updateOrder(updatedOrder);
-        if (mounted) Navigator.of(context).pop(updatedOrder);
+
+        if (originalOrder.status == OrderStatus.emFabricacao) {
+          await _firestoreService.updateInProductionOrder(originalOrder, updatedOrderData);
+        } else {
+          await _firestoreService.updateOrder(updatedOrderData);
+        }
+        
+        final reloadedOrder = await _firestoreService.getOrderById(originalOrder.id!);
+        if (mounted) Navigator.of(context).pop(reloadedOrder);
+
       } else {
         final newOrder = Order(
           clientId: _selectedClient!.id!, clientName: _selectedClient!.name, items: _orderItems,
@@ -362,7 +406,15 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                 itemCount: _orderItems.length,
                 itemBuilder: (context, index) {
                   final item = _orderItems[index];
-                  return ListTile(title: Text(item.productName), subtitle: Text('${item.quantity} x ${_currencyFormatter.format(item.finalUnitPrice)}'), trailing: Row(mainAxisSize: MainAxisSize.min, children: [Text(_currencyFormatter.format(item.totalPrice), style: const TextStyle(fontWeight: FontWeight.bold)), IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _removeItem(index))]));
+                  return ListTile(
+                    title: Text(item.productName),
+                    subtitle: Text('${item.quantity} x ${_currencyFormatter.format(item.finalUnitPrice)}'),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Text(_currencyFormatter.format(item.totalPrice), style: const TextStyle(fontWeight: FontWeight.bold)),
+                      IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: () => _removeItem(index))
+                    ]),
+                    onTap: () => _editOrderItem(index),
+                  );
                 },
               ),
               if (_orderItems.isEmpty) const Padding(padding: EdgeInsets.symmetric(vertical: 16.0), child: Center(child: Text('Nenhum item adicionado.'))),
@@ -408,8 +460,8 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                       _buildTotalRow('TOTAL', _finalAmount, isTotal: true),
                       const SizedBox(height: 10),
                       _isEstimatingDate
-                        ? const Center(child: Padding(padding: EdgeInsets.all(8.0), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [CircularProgressIndicator(), SizedBox(width: 10), Text('Calculando prazo...')],)))
-                        : _buildTotalRow('Previsão de Entrega', 0, isDate: true),
+                          ? const Center(child: Padding(padding: EdgeInsets.all(8.0), child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [CircularProgressIndicator(), SizedBox(width: 10), Text('Calculando prazo...')],)))
+                          : _buildTotalRow('Previsão de Entrega', 0, isDate: true),
                     ],
                   ),
                 ),

@@ -13,17 +13,17 @@ class Order {
   final String clientId;
   final String clientName;
   final List<OrderItem> items;
-  OrderStatus status;
-  PaymentStatus paymentStatus;
+  final OrderStatus status;
+  final PaymentStatus paymentStatus;
   final Timestamp creationDate;
-  Timestamp? confirmationDate;
-  Timestamp? deliveryDate;
+  final Timestamp? confirmationDate;
+  final Timestamp? deliveryDate;
   
   final double totalItemsAmount;
   final double shippingCost;
   final double discount;
   final double finalAmount;
-  double amountPaid;
+  final double amountPaid;
 
   final String? paymentTerms;
   final String paymentMethod;
@@ -62,7 +62,7 @@ class Order {
     String? clientId, String? clientName, List<OrderItem>? items, OrderStatus? status, PaymentStatus? paymentStatus,
     double? totalItemsAmount, double? shippingCost, double? discount, double? finalAmount, double? amountPaid,
     String? paymentTerms, String? paymentMethod, String? notes, Address? deliveryAddress,
-    Timestamp? deliveryDate, // <-- CAMPO ADICIONADO AQUI
+    Timestamp? deliveryDate, Timestamp? confirmationDate, List<String>? attachmentUrls,
   }) {
     return Order(
       id: id,
@@ -72,8 +72,8 @@ class Order {
       status: status ?? this.status,
       paymentStatus: paymentStatus ?? this.paymentStatus,
       creationDate: creationDate,
-      confirmationDate: confirmationDate,
-      deliveryDate: deliveryDate ?? this.deliveryDate, // <-- CAMPO ADICIONADO AQUI
+      confirmationDate: confirmationDate ?? this.confirmationDate,
+      deliveryDate: deliveryDate ?? this.deliveryDate,
       totalItemsAmount: totalItemsAmount ?? this.totalItemsAmount,
       shippingCost: shippingCost ?? this.shippingCost,
       discount: discount ?? this.discount,
@@ -82,7 +82,7 @@ class Order {
       paymentTerms: paymentTerms ?? this.paymentTerms,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       notes: notes ?? this.notes,
-      attachmentUrls: attachmentUrls,
+      attachmentUrls: attachmentUrls ?? this.attachmentUrls,
       createdByUserId: createdByUserId,
       createdByUserName: createdByUserName,
       deliveryAddress: deliveryAddress ?? this.deliveryAddress,

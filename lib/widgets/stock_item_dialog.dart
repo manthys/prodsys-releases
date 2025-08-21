@@ -20,6 +20,11 @@ class _StockItemDialogState extends State<StockItemDialog> {
   Product? _selectedProduct;
   String _logoType = 'Nenhum';
   bool _isLoading = false;
+  
+  // =================================================================
+  // VARIÁVEL DE ESTADO PARA O CHECKBOX
+  // =================================================================
+  bool _fulfillPendingOrders = true;
 
   @override
   Widget build(BuildContext context) {
@@ -73,12 +78,28 @@ class _StockItemDialogState extends State<StockItemDialog> {
                 groupValue: _logoType,
                 onChanged: (value) => setState(() => _logoType = value!),
               ),
-              // ===== OPÇÃO ADICIONADA =====
               RadioListTile<String>(
                 title: const Text('Logomarca do Cliente'),
                 value: 'Cliente',
                 groupValue: _logoType,
                 onChanged: (value) => setState(() => _logoType = value!),
+              ),
+              
+              // =================================================================
+              // CHECKBOX ADICIONADO AQUI
+              // =================================================================
+              const Divider(height: 20),
+              CheckboxListTile(
+                title: const Text('Usar para atender pedidos pendentes'),
+                subtitle: const Text('Se marcado, o estoque quitará as pendências mais antigas.'),
+                value: _fulfillPendingOrders,
+                onChanged: (value) {
+                  setState(() {
+                    _fulfillPendingOrders = value ?? true;
+                  });
+                },
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
               ),
             ],
           ),
@@ -90,10 +111,14 @@ class _StockItemDialogState extends State<StockItemDialog> {
           onPressed: _isLoading ? null : () async {
             if (_formKey.currentState!.validate()) {
               setState(() => _isLoading = true);
+              // =================================================================
+              // PARÂMETRO ENVIADO NA CHAMADA DA FUNÇÃO
+              // =================================================================
               await _firestoreService.addManualStockItem(
                 _selectedProduct!,
                 int.parse(_qtyController.text),
                 _logoType,
+                fulfillPendingOrders: _fulfillPendingOrders,
               );
               if (mounted) Navigator.of(context).pop(true);
             }

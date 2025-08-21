@@ -4,7 +4,7 @@ class OrderItem {
   final String sku;
   final String productName;
   final int quantity;
-  int quantityProduced;
+  final int quantityProduced;
   final double finalUnitPrice;
   final bool includesLid;
   final String logoType;
@@ -22,6 +22,31 @@ class OrderItem {
 
   int get remainingQuantity => quantity - quantityProduced;
   double get totalPrice => quantity * finalUnitPrice;
+
+  // =================================================================
+  // FUNÇÃO 'copyWith' ADICIONADA AQUI
+  // =================================================================
+  OrderItem copyWith({
+    String? productId,
+    String? sku,
+    String? productName,
+    int? quantity,
+    int? quantityProduced,
+    double? finalUnitPrice,
+    bool? includesLid,
+    String? logoType,
+  }) {
+    return OrderItem(
+      productId: productId ?? this.productId,
+      sku: sku ?? this.sku,
+      productName: productName ?? this.productName,
+      quantity: quantity ?? this.quantity,
+      quantityProduced: quantityProduced ?? this.quantityProduced,
+      finalUnitPrice: finalUnitPrice ?? this.finalUnitPrice,
+      includesLid: includesLid ?? this.includesLid,
+      logoType: logoType ?? this.logoType,
+    );
+  }
 
   Map<String, dynamic> toJson() {
     return {
