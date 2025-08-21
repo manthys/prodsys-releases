@@ -24,7 +24,6 @@ class PdfService {
     final boldFont = await PdfGoogleFonts.robotoBold();
     final theme = pw.ThemeData.withFont(base: font, bold: boldFont);
     
-    // ===== CORREÇÃO AQUI: USANDO pw.MultiPage =====
     pdf.addPage(
       pw.MultiPage(
         theme: theme,
@@ -44,7 +43,6 @@ class PdfService {
             pw.SizedBox(height: 15),
             _buildItemsTable(order),
             _buildTotals(order),
-            // pw.Spacer() não é necessário aqui, pois o MultiPage gerencia o espaço
             pw.SizedBox(height: 30),
             _buildFooterInfo(order, company),
           ];
@@ -55,10 +53,10 @@ class PdfService {
     await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save());
   }
 
-  // O resto do arquivo continua exatamente o mesmo
   pw.Widget _buildHeader(CompanySettings company, pw.MemoryImage? logo) {
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
         pw.Row(
           crossAxisAlignment: pw.CrossAxisAlignment.center,
@@ -79,7 +77,6 @@ class PdfService {
             ),
           ]
         ),
-        pw.Text('Página 1/1', style: const pw.TextStyle(fontSize: 9)),
       ]
     );
   }
@@ -104,6 +101,7 @@ class PdfService {
     );
   }
 
+  // ##### CORREÇÃO AQUI: REMOVIDA A VERIFICAÇÃO "if (value.isEmpty)" #####
   pw.Widget _buildKeyValueRow(String key, String value) {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 2),
@@ -132,7 +130,7 @@ class PdfService {
       title: 'DADOS DA ORDEM DE COMPRA',
       child: pw.Column(
         children: [
-           pw.Row(
+          pw.Row(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.Expanded(
@@ -162,8 +160,9 @@ class PdfService {
           title: 'RESPONSÁVEL PELA COMPRA',
           child: pw.Column(children: [
               _buildKeyValueRow('Nome', client.name),
-              _buildKeyValueRow('Telefone', client.phone),
-              _buildKeyValueRow('E-mail', client.email ?? 'N/A'),
+              _buildKeyValueRow('CPF/CNPJ', client.cnpj ?? 'N/A'),
+              _buildKeyValueRow('Telefone', client.phone), // Agora vai aparecer mesmo se estiver em branco
+              _buildKeyValueRow('E-mail', client.email ?? 'N/A'), // Agora vai aparecer mesmo se for nulo
           ])
         ),
         pw.SizedBox(height: 10),
@@ -263,6 +262,11 @@ class PdfService {
               pw.Text(currencyFormatter.format(order.shippingCost))
             ]),
             pw.Divider(color: PdfColors.grey400),
+             pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
+              pw.Text('Desconto'),
+              pw.Text('- ${currencyFormatter.format(order.discount)}'),
+            ]),
+            pw.Divider(color: PdfColors.grey400),
             pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
               pw.Text('Total', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
               pw.Text(currencyFormatter.format(order.finalAmount), style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
@@ -274,7 +278,7 @@ class PdfService {
   }
 
   pw.Widget _buildFooterInfo(Order order, CompanySettings company) {
-     return _buildSection(
+      return _buildSection(
         title: 'INFORMAÇÕES ADICIONAIS',
         child: pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -283,7 +287,7 @@ class PdfService {
             _buildKeyValueRow('Dados para Pagamento', company.paymentInfo),
           ]
         ),
-     );
+      );
   }
  
   pw.Widget _buildPageFooter(pw.Context context) {

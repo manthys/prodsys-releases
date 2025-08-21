@@ -47,7 +47,7 @@ class FirestoreService {
     const projectId = "sistema-gestao-cliente";
     const region = "us-central1";
     const functionName = "reallocateStockItem";
-    const mySecretKey = "964069882pP@";
+    const mySecretKey = "COLOQUE-AQUI-SUA-SENHA-LONGA-E-ALEATORIA";
 
     final url = Uri.parse('https://$region-$projectId.cloudfunctions.net/$functionName');
     final body = json.encode({
@@ -82,12 +82,10 @@ class FirestoreService {
     }
   }
   
-  // ##### MÉTODO CORRIGIDO PARA NÃO USAR runTransaction #####
   Future<void> confirmRefundAndFinalizeOrder(String orderId) async {
     final orderRef = _db.collection('orders').doc(orderId);
     final formattedDate = DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now());
 
-    // Abordagem "Ler e Escrever" para evitar o crash do runTransaction no Windows
     final doc = await orderRef.get();
     if (!doc.exists) {
       throw Exception("Pedido não encontrado.");
@@ -95,19 +93,41 @@ class FirestoreService {
     
     String currentNotes = (doc.data() as Map<String, dynamic>)['notes'] ?? '';
     
-    // Remove a nota antiga de reembolso para evitar duplicatas
     currentNotes = currentNotes.replaceAll(RegExp(r'\n\[SISTEMA\] Valor a devolver ao cliente: R\$\d+\.\d{2}\.'), '');
     
     String newNotes = currentNotes.trim() + '\n[SISTEMA] Devolução confirmada em $formattedDate.';
     
-    // Atualiza a nota no documento
     await orderRef.update({'notes': newNotes});
 
-    // Após confirmar o reembolso, verifica se o pedido já pode ser finalizado
     await checkIfOrderIsFullyCompleted(orderId);
   }
 
-  // O resto do seu código permanece igual...
+  Future<void> addStockItemsToProductionQueue({
+    required Product product,
+    required int quantity,
+    required String logoType,
+  }) async {
+    final batch = _db.batch();
+    final stockItemsCollection = _db.collection('stock_items');
+
+    for (int i = 0; i < quantity; i++) {
+      final newStockItem = StockItem(
+        productId: product.id!,
+        productName: product.name,
+        sku: product.sku,
+        status: StockItemStatus.aguardandoProducao,
+        logoType: logoType,
+        orderId: null,
+        clientName: 'Estoque Interno',
+        creationDate: Timestamp.now(),
+        deliveryDeadline: Timestamp.fromDate(DateTime.now().add(const Duration(days: 90))),
+      );
+      final docRef = stockItemsCollection.doc();
+      batch.set(docRef, newStockItem.toJson());
+    }
+    await batch.commit();
+  }
+
   Stream<List<Client>> getClientsStream() => _db.collection('clients').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Client.fromFirestore(doc.data(), doc.id)).toList());
   Future<void> addClient(Client client) => _db.collection('clients').add(client.toJson());
   Future<void> updateClient(Client client) => _db.collection('clients').doc(client.id).update(client.toJson());
@@ -219,10 +239,13 @@ class FirestoreService {
     }
     await batch.commit();
   }
+  
+  // ##### FUNÇÃO RE-ADICIONADA AQUI #####
   Future<Order?> getOrderById(String orderId) async {
     final doc = await _db.collection('orders').doc(orderId).get();
     return doc.exists ? Order.fromFirestore(doc.data()!, doc.id) : null;
   }
+
   Future<void> updateOrderStatus(String orderId, OrderStatus newStatus, {bool setConfirmationDate = false}) {
     final Map<String, dynamic> dataToUpdate = {'status': newStatus.name};
     if (setConfirmationDate) dataToUpdate['confirmationDate'] = Timestamp.now();
@@ -500,7 +523,6 @@ class FirestoreService {
     required StockItem stockItemToDeallocate,
     required int quantity,
   }) async {
-    // Esta função pode continuar usando batch, pois não apresentou o mesmo bug.
     final batch = _db.batch();
     final stockItemsCollection = _db.collection('stock_items');
 

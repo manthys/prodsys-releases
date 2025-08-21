@@ -200,7 +200,7 @@ class _ProductionScreenState extends State<ProductionScreen> {
             controller: qtyController,
             keyboardType: TextInputType.number,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            decoration: const InputDecoration(labelText: 'Quantidade Realmente Produzida'),
+            decoration: const InputDecoration(labelText: 'Quantidade a Produzir'),
             autofocus: true,
           ),
           actions: [
@@ -214,10 +214,15 @@ class _ProductionScreenState extends State<ProductionScreen> {
                   qtyProduced = planItem.quantityToProduce;
                 }
                 
-                if (planItem.sourceItems.isEmpty) {
+                // ##### ALTERAÇÃO AQUI: CHAMA O NOVO MÉTODO #####
+                if (planItem.sourceItems.isEmpty) { // Produção para estoque
                   final product = (await _firestoreService.getProductById(planItem.productId))!;
-                  await _firestoreService.addManualStockItem(product, qtyProduced, planItem.logoType, fulfillPendingOrders: false);
-                } else {
+                  await _firestoreService.addStockItemsToProductionQueue(
+                    product: product, 
+                    quantity: qtyProduced, 
+                    logoType: planItem.logoType
+                  );
+                } else { // Produção para pedido
                   final itemsToLaunch = planItem.sourceItems.take(qtyProduced).toList();
                   await _firestoreService.launchProductionRun(itemsToLaunch);
                   if (planItem.sourceItems.first.orderId != null) {
@@ -227,8 +232,11 @@ class _ProductionScreenState extends State<ProductionScreen> {
                 
                 if (mounted) {
                   Navigator.of(context).pop();
+                  final message = planItem.sourceItems.isEmpty
+                    ? '$qtyProduced x ${planItem.productName} enviado(s) para a fila de produção!'
+                    : '$qtyProduced x ${planItem.productName} lançado(s) em estoque!';
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('$qtyProduced x ${planItem.productName} lançado(s) em estoque!'), backgroundColor: Colors.green),
+                    SnackBar(content: Text(message), backgroundColor: Colors.green),
                   );
                 }
               },
