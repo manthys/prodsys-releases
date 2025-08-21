@@ -101,7 +101,6 @@ class PdfService {
     );
   }
 
-  // ##### CORREÇÃO AQUI: REMOVIDA A VERIFICAÇÃO "if (value.isEmpty)" #####
   pw.Widget _buildKeyValueRow(String key, String value) {
     return pw.Padding(
       padding: const pw.EdgeInsets.symmetric(vertical: 2),
@@ -161,8 +160,8 @@ class PdfService {
           child: pw.Column(children: [
               _buildKeyValueRow('Nome', client.name),
               _buildKeyValueRow('CPF/CNPJ', client.cnpj ?? 'N/A'),
-              _buildKeyValueRow('Telefone', client.phone), // Agora vai aparecer mesmo se estiver em branco
-              _buildKeyValueRow('E-mail', client.email ?? 'N/A'), // Agora vai aparecer mesmo se for nulo
+              _buildKeyValueRow('Telefone', client.phone),
+              _buildKeyValueRow('E-mail', client.email ?? 'N/A'),
           ])
         ),
         pw.SizedBox(height: 10),
@@ -262,11 +261,7 @@ class PdfService {
               pw.Text(currencyFormatter.format(order.shippingCost))
             ]),
             pw.Divider(color: PdfColors.grey400),
-             pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
-              pw.Text('Desconto'),
-              pw.Text('- ${currencyFormatter.format(order.discount)}'),
-            ]),
-            pw.Divider(color: PdfColors.grey400),
+            // ##### LINHAS DO DESCONTO REMOVIDAS DAQUI #####
             pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
               pw.Text('Total', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
               pw.Text(currencyFormatter.format(order.finalAmount), style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
