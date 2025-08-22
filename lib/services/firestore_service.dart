@@ -93,7 +93,7 @@ class FirestoreService {
     
     String currentNotes = (doc.data() as Map<String, dynamic>)['notes'] ?? '';
     
-    currentNotes = currentNotes.replaceAll(RegExp(r'\n\[SISTEMA\] Valor a devolver ao cliente: R\$\d+\.\d{2}\.'), '');
+    currentNotes = currentNotes.replaceAll(RegExp(r'\n\[SISTEMA\] Valor a devolver ao cliente: R\$\d+[\.,]\d{2}\.'), '');
     
     String newNotes = currentNotes.trim() + '\n[SISTEMA] Devolução confirmada em $formattedDate.';
     
@@ -143,6 +143,23 @@ class FirestoreService {
     final doc = await _db.collection('products').doc(productId).get();
     return doc.exists ? Product.fromFirestore(doc.data()!, doc.id) : null;
   }
+
+  // ##### NOVO MÉTODO PARA DELETAR PRODUTOS COM SEGURANÇA #####
+  Future<void> deleteProduct(String productId) async {
+    // 1. Verificar se o produto está em algum pedido
+    final ordersSnapshot = await _db.collection('orders').get();
+    for (final orderDoc in ordersSnapshot.docs) {
+      final order = Order.fromFirestore(orderDoc.data(), orderDoc.id);
+      if (order.items.any((item) => item.productId == productId)) {
+        // Se encontrar, lança um erro e impede a exclusão
+        throw Exception('Este produto não pode ser excluído pois está associado ao Pedido #${order.id?.substring(0, 6).toUpperCase()}.');
+      }
+    }
+
+    // 2. Se não estiver em nenhum pedido, pode excluir
+    await _db.collection('products').doc(productId).delete();
+  }
+  
   Stream<List<Order>> getOrdersStream() => _db.collection('orders').orderBy('creationDate', descending: true).snapshots().map((snapshot) => snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList());
   Stream<List<Order>> getOrdersForClientStream(String clientId) => _db.collection('orders').where('clientId', isEqualTo: clientId).orderBy('creationDate', descending: true).snapshots().map((snapshot) => snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList());
   Future<DocumentReference> addOrder(Order order) => _db.collection('orders').add(order.toJson());
@@ -240,7 +257,6 @@ class FirestoreService {
     await batch.commit();
   }
   
-  // ##### FUNÇÃO RE-ADICIONADA AQUI #####
   Future<Order?> getOrderById(String orderId) async {
     final doc = await _db.collection('orders').doc(orderId).get();
     return doc.exists ? Order.fromFirestore(doc.data()!, doc.id) : null;
