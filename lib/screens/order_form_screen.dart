@@ -168,6 +168,15 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                             child: ListTile(
                               title: Text(product.name),
                               subtitle: Text('SKU: ${product.sku}'),
+                              // ##### ALTERAÇÃO AQUI: ADICIONADO O PREÇO #####
+                              trailing: Text(
+                                _currencyFormatter.format(product.basePrice),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 14,
+                                  color: Colors.green
+                                ),
+                              ),
                               onTap: () {
                                 Navigator.of(context).pop();
                                 _addProductToOrder(product);
@@ -206,9 +215,6 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
         final qty = int.tryParse(qtyController.text) ?? 0;
         if (qty > 0) {
           setState(() {
-            // =================================================================
-            // CORREÇÃO AQUI: ADICIONADO includesLid
-            // =================================================================
             _orderItems.add(OrderItem(productId: product.id!, sku: product.sku, productName: product.name, quantity: qty, finalUnitPrice: calculateFinalPrice(), logoType: logoType, includesLid: false));
             _calculateTotal();
           });
