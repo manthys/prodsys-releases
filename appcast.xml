@@ -1,11 +1,10 @@
-<?xml version="1.0" encoding="utf-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
     <channel>
         <title>ProdSys Releases</title>
         <item>
-            <title>Versão 1.4.3</title>
-            <enclosure url="https://github.com/manthys/prodsys-releases/releases/download/v1.4.3/setup-prodsys-1.4.3.exe"
-                sparkle:version="1.4.3"
+            <title>Versão 1.4.4</title>
+            <enclosure url="https://github.com/manthys/prodsys-releases/releases/download/v1.4.4/setup-prodsys-1.4.4.exe"
+                sparkle:version="1.4.4"
                 type="application/octet-stream" />
         </item>
     </channel>
