@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/product_model.dart';
+import '../models/price_variation_model.dart'; // Importe o modelo de variação
 import '../services/firestore_service.dart';
 import '../widgets/product_dialog.dart';
 
@@ -25,7 +26,15 @@ class ProductsScreen extends StatelessWidget {
       }
     }
 
-    return Scaffold( // Adicionado Scaffold para consistência
+    // Função auxiliar para encontrar um preço específico
+    PriceVariation _findPrice(Product product, String description) {
+      return product.priceVariations.firstWhere(
+        (v) => v.description == description,
+        orElse: () => PriceVariation(description: description, price: 0.0),
+      );
+    }
+
+    return Scaffold(
       body: StreamBuilder<List<Product>>(
         stream: firestoreService.getProductsStream(),
         builder: (context, snapshot) {
@@ -35,26 +44,33 @@ class ProductsScreen extends StatelessWidget {
 
           final products = snapshot.data!;
           
-          // ===== ESTRUTURA DE LAYOUT CORRIGIDA =====
           return SingleChildScrollView(
             padding: const EdgeInsets.all(16.0),
             child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal, // Permite rolar para os lados
+              scrollDirection: Axis.horizontal,
               child: DataTable(
                 columns: const [
                   DataColumn(label: Text('Nome/Descrição', style: TextStyle(fontWeight: FontWeight.bold))),
                   DataColumn(label: Text('SKU', style: TextStyle(fontWeight: FontWeight.bold))),
                   DataColumn(label: Text('Tipo de Forma', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Preço Base', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Adic. Logo', style: TextStyle(fontWeight: FontWeight.bold))),
+                  // ##### COLUNAS DE PREÇO ATUALIZADAS #####
+                  DataColumn(label: Text('Preço S/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                  DataColumn(label: Text('Preço C/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                  DataColumn(label: Text('Adic. Logo', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
                   DataColumn(label: Text('Ações', style: TextStyle(fontWeight: FontWeight.bold))),
                 ],
                 rows: products.map((product) {
+                  // Encontra os preços para exibição
+                  final priceWithoutNota = _findPrice(product, 'Sem Nota');
+                  final priceWithNota = _findPrice(product, 'Com Nota');
+
                   return DataRow(cells: [
                     DataCell(Text(product.name)),
                     DataCell(Text(product.sku)),
                     DataCell(Text(product.moldType)),
-                    DataCell(Text(currencyFormatter.format(product.basePrice))),
+                    // ##### CÉLULAS DE PREÇO ATUALIZADAS #####
+                    DataCell(Text(currencyFormatter.format(priceWithoutNota.price))),
+                    DataCell(Text(currencyFormatter.format(priceWithNota.price))),
                     DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
                     DataCell(Row(
                       children: [

@@ -1,43 +1,92 @@
 // lib/widgets/product_dialog.dart
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/product_model.dart';
+import '../models/price_variation_model.dart';
 
 class ProductDialog extends StatefulWidget {
   final Product? product;
   const ProductDialog({super.key, this.product});
 
   @override
-  _ProductDialogState createState() => _ProductDialogState();
+  State<ProductDialog> createState() => _ProductDialogState();
 }
 
 class _ProductDialogState extends State<ProductDialog> {
   final _formKey = GlobalKey<FormState>();
-  late String _name, _sku, _moldType;
-  late double _basePrice, _clientLogoPrice;
+  final _nameController = TextEditingController();
+  final _skuController = TextEditingController();
+  final _moldTypeController = TextEditingController();
+  final _clientLogoPriceController = TextEditingController();
+
+  // Controladores fixos para os dois tipos de preço
+  final _priceWithoutNotaController = TextEditingController();
+  final _priceWithNotaController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _name = widget.product?.name ?? '';
-    _sku = widget.product?.sku ?? '';
-    _moldType = widget.product?.moldType ?? '';
-    _basePrice = widget.product?.basePrice ?? 0.0;
-    _clientLogoPrice = widget.product?.clientLogoPrice ?? 0.0;
+    if (widget.product != null) {
+      _nameController.text = widget.product!.name;
+      _skuController.text = widget.product!.sku;
+      _moldTypeController.text = widget.product!.moldType;
+      _clientLogoPriceController.text = widget.product!.clientLogoPrice.toString();
+      
+      // Popula os campos de preço com base na descrição
+      final priceWithNota = widget.product!.priceVariations.firstWhere(
+        (v) => v.description == 'Com Nota',
+        orElse: () => PriceVariation(description: 'Com Nota', price: 0.0),
+      );
+      final priceWithoutNota = widget.product!.priceVariations.firstWhere(
+        (v) => v.description == 'Sem Nota',
+        orElse: () => PriceVariation(description: 'Sem Nota', price: 0.0),
+      );
+      
+      _priceWithNotaController.text = priceWithNota.price.toString();
+      _priceWithoutNotaController.text = priceWithoutNota.price.toString();
+      
+    } else {
+       // Valores padrão para um novo produto
+      _priceWithNotaController.text = '0.0';
+      _priceWithoutNotaController.text = '0.0';
+    }
   }
 
-  void _submit() {
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _skuController.dispose();
+    _moldTypeController.dispose();
+    _clientLogoPriceController.dispose();
+    _priceWithNotaController.dispose();
+    _priceWithoutNotaController.dispose();
+    super.dispose();
+  }
+  
+  void _saveForm() {
     if (_formKey.currentState!.validate()) {
-      _formKey.currentState!.save();
-      final newProduct = Product(
+      // Cria a lista de variações com base nos controladores
+      final List<PriceVariation> priceVariations = [
+        PriceVariation(
+          description: 'Sem Nota',
+          price: double.tryParse(_priceWithoutNotaController.text.replaceAll(',', '.')) ?? 0.0,
+        ),
+        PriceVariation(
+          description: 'Com Nota',
+          price: double.tryParse(_priceWithNotaController.text.replaceAll(',', '.')) ?? 0.0,
+        ),
+      ];
+      
+      final product = Product(
         id: widget.product?.id,
-        name: _name,
-        sku: _sku,
-        moldType: _moldType,
-        basePrice: _basePrice,
-        clientLogoPrice: _clientLogoPrice,
+        name: _nameController.text,
+        sku: _skuController.text,
+        moldType: _moldTypeController.text,
+        clientLogoPrice: double.tryParse(_clientLogoPriceController.text.replaceAll(',', '.')) ?? 0.0,
+        priceVariations: priceVariations,
       );
-      Navigator.of(context).pop(newProduct);
+      Navigator.of(context).pop(product);
     }
   }
 
@@ -45,44 +94,56 @@ class _ProductDialogState extends State<ProductDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: Text(widget.product == null ? 'Novo Produto' : 'Editar Produto'),
-      content: Form(
-        key: _formKey,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(initialValue: _name, decoration: const InputDecoration(labelText: 'Nome/Descrição do Produto', border: OutlineInputBorder()), validator: (v) => v!.isEmpty ? 'Obrigatório' : null, onSaved: (v) => _name = v!),
-              const SizedBox(height: 16),
-              TextFormField(initialValue: _sku, decoration: const InputDecoration(labelText: 'SKU (Código Único)', border: OutlineInputBorder()), validator: (v) => v!.isEmpty ? 'Obrigatório' : null, onSaved: (v) => _sku = v!),
-              const SizedBox(height: 16),
-              TextFormField(initialValue: _moldType, decoration: const InputDecoration(labelText: 'Tipo de Forma Utilizada (Ex: T-50)', border: OutlineInputBorder()), validator: (v) => v!.isEmpty ? 'Obrigatório' : null, onSaved: (v) => _moldType = v!),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(child: _buildPriceField('Preço Base (Limpo)', (v) => _basePrice = v, _basePrice)),
-                  const SizedBox(width: 16),
-                  Expanded(child: _buildPriceField('Adicional Logo Cliente', (v) => _clientLogoPrice = v, _clientLogoPrice)),
-                ],
-              ),
-            ],
+      content: SizedBox(
+        width: 500, // Largura ajustada
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextFormField(controller: _nameController, decoration: const InputDecoration(labelText: 'Nome/Descrição'), validator: (v) => v!.isEmpty ? 'Obrigatório' : null),
+                const SizedBox(height: 16),
+                TextFormField(controller: _skuController, decoration: const InputDecoration(labelText: 'SKU'), validator: (v) => v!.isEmpty ? 'Obrigatório' : null),
+                const SizedBox(height: 16),
+                TextFormField(controller: _moldTypeController, decoration: const InputDecoration(labelText: 'Tipo de Forma'), validator: (v) => v!.isEmpty ? 'Obrigatório' : null),
+                const SizedBox(height: 16),
+                TextFormField(controller: _clientLogoPriceController, decoration: const InputDecoration(labelText: 'Adicional por Logo do Cliente (R\$)'), keyboardType: const TextInputType.numberWithOptions(decimal: true)),
+                const Divider(height: 32),
+                Text('Tabela de Preços', style: Theme.of(context).textTheme.titleMedium),
+                const SizedBox(height: 16),
+                // Campos fixos para os preços
+                TextFormField(
+                  controller: _priceWithoutNotaController,
+                  decoration: const InputDecoration(labelText: 'Preço SEM Nota (R\$)'),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  validator: (v) {
+                    if (v!.isEmpty) return 'Obrigatório';
+                    if (double.tryParse(v.replaceAll(',', '.')) == null) return 'Inválido';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _priceWithNotaController,
+                  decoration: const InputDecoration(labelText: 'Preço COM Nota (R\$)'),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  validator: (v) {
+                    if (v!.isEmpty) return 'Obrigatório';
+                    if (double.tryParse(v.replaceAll(',', '.')) == null) return 'Inválido';
+                    return null;
+                  },
+                ),
+              ],
+            ),
           ),
         ),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
-        ElevatedButton(onPressed: _submit, child: const Text('Salvar')),
+        ElevatedButton(onPressed: _saveForm, child: const Text('Salvar')),
       ],
-    );
-  }
-
-  Widget _buildPriceField(String label, Function(double) onSaved, double initialValue) {
-    return TextFormField(
-      initialValue: initialValue.toString().replaceAll('.', ','),
-      decoration: InputDecoration(labelText: label, prefixText: 'R\$ ', border: const OutlineInputBorder()),
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+[,.]?\d{0,2}'))],
-      validator: (v) => (v == null || double.tryParse(v.replaceAll(',', '.')) == null) ? 'Inválido' : null,
-      onSaved: (v) => onSaved(double.parse(v!.replaceAll(',', '.'))),
     );
   }
 }

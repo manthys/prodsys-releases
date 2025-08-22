@@ -9,6 +9,7 @@ import '../models/company_settings_model.dart';
 import '../models/order_item_model.dart';
 import '../models/order_model.dart';
 import '../models/product_model.dart';
+import '../models/price_variation_model.dart';
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/production_simulator.dart';
@@ -103,7 +104,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     _notesController.text = order.notes ?? '';
     _paymentMethod = order.paymentMethod;
     _orderItems.clear();
-    _orderItems.addAll(order.items.map((item) => item.copyWith())); // Copia para evitar modificar a lista original
+    _orderItems.addAll(order.items.map((item) => item.copyWith()));
     _updateDeliveryAddressFields(order.deliveryAddress);
     _calculateTotal();
     if (_orderItems.isNotEmpty) _updateDeliveryDateEstimate();
@@ -120,6 +121,13 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   void _showProductSelectionDialog() {
     final searchController = TextEditingController();
     List<Product> filteredProducts = List.from(_allProducts);
+
+    PriceVariation findPrice(Product product, String description) {
+      return product.priceVariations.firstWhere(
+        (v) => v.description == description,
+        orElse: () => PriceVariation(description: description, price: 0.0),
+      );
+    }
 
     showDialog(
       context: context,
@@ -143,7 +151,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
             return AlertDialog(
               title: const Text('Selecione um Produto'),
               content: SizedBox(
-                width: 400,
+                width: 500,
                 height: 500,
                 child: Column(
                   children: [
@@ -163,18 +171,38 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                         itemCount: filteredProducts.length,
                         itemBuilder: (context, index) {
                           final product = filteredProducts[index];
+                          final priceWithoutNota = findPrice(product, 'Sem Nota');
+                          final priceWithNota = findPrice(product, 'Com Nota');
+
                           return Card(
                             margin: const EdgeInsets.symmetric(vertical: 4),
                             child: ListTile(
                               title: Text(product.name),
-                              subtitle: Text('SKU: ${product.sku}'),
-                              // ##### ALTERAÇÃO AQUI: ADICIONADO O PREÇO #####
-                              trailing: Text(
-                                _currencyFormatter.format(product.basePrice),
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 14,
-                                  color: Colors.green
+                              isThreeLine: true,
+                              // ##### SUBTÍTULO ATUALIZADO PARA USAR RichText COM CORES #####
+                              subtitle: RichText(
+                                text: TextSpan(
+                                  style: Theme.of(context).textTheme.bodySmall, // Estilo padrão
+                                  children: <TextSpan>[
+                                    TextSpan(text: 'SKU: ${product.sku}\n'),
+                                    const TextSpan(text: 'S/ Nota: '),
+                                    TextSpan(
+                                      text: _currencyFormatter.format(priceWithoutNota.price),
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.green.shade700,
+                                      ),
+                                    ),
+                                    const TextSpan(text: ' | '),
+                                    const TextSpan(text: 'C/ Nota: '),
+                                    TextSpan(
+                                      text: _currencyFormatter.format(priceWithNota.price),
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Theme.of(context).colorScheme.primary,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
                               onTap: () {
@@ -202,12 +230,48 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     );
   }
 
-  void _addProductToOrder(Product product) {
+  void _addProductToOrder(Product product) async {
+    if (product.priceVariations.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Este produto não tem preços cadastrados!'), backgroundColor: Colors.red)
+      );
+      return;
+    }
+
+    PriceVariation selectedVariation;
+    if (product.priceVariations.length == 1) {
+      selectedVariation = product.priceVariations.first;
+    } else {
+      final PriceVariation? result = await showDialog<PriceVariation>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Selecione uma Tabela de Preço'),
+          content: SizedBox(
+            width: 300,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: product.priceVariations.length,
+              itemBuilder: (context, index) {
+                final variation = product.priceVariations[index];
+                return ListTile(
+                  title: Text(variation.description),
+                  trailing: Text(_currencyFormatter.format(variation.price)),
+                  onTap: () => Navigator.of(context).pop(variation),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      if (result == null) return;
+      selectedVariation = result;
+    }
+
     final qtyController = TextEditingController(text: '1');
     String logoType = 'Nenhum'; 
     showDialog(context: context, builder: (context) => StatefulBuilder(builder: (context, setDialogState) {
       double calculateFinalPrice() {
-        double finalPrice = product.basePrice;
+        double finalPrice = selectedVariation.price;
         if (logoType == 'Cliente') finalPrice += product.clientLogoPrice;
         return finalPrice;
       }
@@ -234,9 +298,15 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
 
     showDialog(context: context, builder: (context) => StatefulBuilder(builder: (context, setDialogState) {
       double calculateFinalPrice() {
-        double finalPrice = product.basePrice;
-        if (logoType == 'Cliente') finalPrice += product.clientLogoPrice;
-        return finalPrice;
+        double basePrice = currentItem.finalUnitPrice;
+        if (logoType != currentItem.logoType) {
+          if (logoType == 'Cliente') {
+            basePrice = currentItem.finalUnitPrice + product.clientLogoPrice;
+          } else if(currentItem.logoType == 'Cliente') {
+            basePrice = currentItem.finalUnitPrice - product.clientLogoPrice;
+          }
+        }
+        return basePrice;
       }
       return AlertDialog(title: Text('Editar ${product.name}'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [TextField(controller: qtyController, keyboardType: TextInputType.number, inputFormatters: [FilteringTextInputFormatter.digitsOnly], decoration: const InputDecoration(labelText: 'Quantidade'), autofocus: true), const SizedBox(height: 16), Text('Logomarca:', style: Theme.of(context).textTheme.bodyMedium), RadioListTile<String>(title: const Text('Nenhuma'), value: 'Nenhum', groupValue: logoType, onChanged: (value) => setDialogState(() => logoType = value!), contentPadding: EdgeInsets.zero), RadioListTile<String>(title: const Text('Logomarca da Empresa'), value: 'Própria', groupValue: logoType, onChanged: (value) => setDialogState(() => logoType = value!), contentPadding: EdgeInsets.zero), RadioListTile<String>(title: Text('Logomarca do Cliente (+ ${_currencyFormatter.format(product.clientLogoPrice)})'), value: 'Cliente', groupValue: logoType, onChanged: (value) => setDialogState(() => logoType = value!), contentPadding: EdgeInsets.zero), const Divider(), const SizedBox(height: 8), Text('Preço Unitário Final: ${_currencyFormatter.format(calculateFinalPrice())}', style: const TextStyle(fontWeight: FontWeight.bold))])), actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')), ElevatedButton(onPressed: () {
         final qty = int.tryParse(qtyController.text) ?? 0;
@@ -480,7 +550,15 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   }
 
   Widget _buildTotalRow(String label, double value, {bool isDiscount = false, bool isTotal = false, bool isDate = false}) {
-    final style = TextStyle(fontSize: isTotal ? 18 : 16, fontWeight: isTotal ? FontWeight.bold : FontWeight.normal, color: isDiscount ? Colors.red : null);
+    final theme = Theme.of(context);
+    Color? valueColor;
+    if (isDiscount) {
+      valueColor = Colors.red;
+    } else if (isTotal) {
+      valueColor = theme.colorScheme.primary;
+    }
+
+    final style = TextStyle(fontSize: isTotal ? 18 : 16, fontWeight: isTotal ? FontWeight.bold : FontWeight.normal);
     
     if (isDate) {
       return Padding(
@@ -491,7 +569,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
             Text(label, style: style),
             Text(
               _estimatedDeliveryDate != null ? DateFormat('dd/MM/yyyy').format(_estimatedDeliveryDate!) : 'Adicione itens para estimar',
-              style: style.copyWith(color: Theme.of(context).primaryColor)
+              style: style.copyWith(color: theme.primaryColor)
             ),
           ],
         ),
@@ -504,7 +582,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: style),
-          Text(_currencyFormatter.format(value), style: style),
+          Text(_currencyFormatter.format(value), style: style.copyWith(color: valueColor)),
         ],
       ),
     );
