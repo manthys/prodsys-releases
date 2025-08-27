@@ -143,20 +143,15 @@ class FirestoreService {
     final doc = await _db.collection('products').doc(productId).get();
     return doc.exists ? Product.fromFirestore(doc.data()!, doc.id) : null;
   }
-
-  // ##### NOVO MÉTODO PARA DELETAR PRODUTOS COM SEGURANÇA #####
+  
   Future<void> deleteProduct(String productId) async {
-    // 1. Verificar se o produto está em algum pedido
     final ordersSnapshot = await _db.collection('orders').get();
     for (final orderDoc in ordersSnapshot.docs) {
       final order = Order.fromFirestore(orderDoc.data(), orderDoc.id);
       if (order.items.any((item) => item.productId == productId)) {
-        // Se encontrar, lança um erro e impede a exclusão
         throw Exception('Este produto não pode ser excluído pois está associado ao Pedido #${order.id?.substring(0, 6).toUpperCase()}.');
       }
     }
-
-    // 2. Se não estiver em nenhum pedido, pode excluir
     await _db.collection('products').doc(productId).delete();
   }
   
@@ -325,7 +320,7 @@ class FirestoreService {
   }
   Future<void> checkAndUpdateOrderStatusAfterProduction(String orderId) async {
     final order = await getOrderById(orderId);
-    if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado || order.status == OrderStatus.aguardandoEntrega) return;
+    if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado || order.status == OrderStatus.aguardandoEntrega || order.status == OrderStatus.aguardandoPagamentoFinal) return;
     final totalItemsInOrder = order.items.fold<int>(0, (sum, item) => sum + item.quantity);
     if (totalItemsInOrder == 0) {
         await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
@@ -366,23 +361,36 @@ class FirestoreService {
     await updateOrderPayment(orderId, {'amountPaid': order.finalAmount, 'paymentStatus': PaymentStatus.pagoIntegralmente.name});
     await checkIfOrderIsFullyCompleted(orderId);
   }
+  
   Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
     final order = await getOrderById(orderId);
     if (order == null || order.status == OrderStatus.finalizado) return;
+
     final totalItemsInOrder = order.items.fold<int>(0, (sum, item) => sum + item.quantity);
+
     if (totalItemsInOrder == 0) {
       if (order.paymentStatus == PaymentStatus.pagoIntegralmente) {
         await updateOrderStatus(orderId, OrderStatus.finalizado);
+      } else {
+        await updateOrderStatus(orderId, OrderStatus.aguardandoPagamentoFinal);
       }
       return;
     }
+
     final deliveredItemsSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).where('status', isEqualTo: StockItemStatus.entregue.name).get();
+    
     final allItemsDelivered = deliveredItemsSnapshot.docs.length >= totalItemsInOrder;
     final isFullyPaid = order.paymentStatus == PaymentStatus.pagoIntegralmente;
-    if (allItemsDelivered && isFullyPaid) {
-      await updateOrderStatus(orderId, OrderStatus.finalizado);
+
+    if (allItemsDelivered) {
+      if (isFullyPaid) {
+        await updateOrderStatus(orderId, OrderStatus.finalizado);
+      } else {
+        await updateOrderStatus(orderId, OrderStatus.aguardandoPagamentoFinal);
+      }
     }
   }
+
   Stream<List<Mold>> getMoldsStream() => _db.collection('molds').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Mold.fromFirestore(doc.data(), doc.id)).toList());
   Future<void> addMold(Mold mold) => _db.collection('molds').add(mold.toJson());
   Future<void> updateMold(Mold mold) => _db.collection('molds').doc(mold.id).update(mold.toJson());
@@ -407,7 +415,7 @@ class FirestoreService {
     );
   }
   Stream<Map<String, dynamic>> getDashboardStream(DateTime start, DateTime end) {
-    final validStatuses = [OrderStatus.pedido.name, OrderStatus.emFabricacao.name, OrderStatus.finalizado.name, OrderStatus.aguardandoEntrega.name];
+    final validStatuses = [OrderStatus.pedido.name, OrderStatus.emFabricacao.name, OrderStatus.finalizado.name, OrderStatus.aguardandoEntrega.name, OrderStatus.aguardandoPagamentoFinal.name];
     Stream<List<Order>> ordersStream = _db.collection('orders').where('status', whereIn: validStatuses).where('creationDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start)).where('creationDate', isLessThanOrEqualTo: Timestamp.fromDate(end)).snapshots().map((snapshot) => snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList());
     Stream<List<Expense>> expensesStream = _db.collection('expenses').where('expenseDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start)).where('expenseDate', isLessThanOrEqualTo: Timestamp.fromDate(end)).snapshots().map((snapshot) => snapshot.docs.map((doc) => Expense.fromFirestore(doc.data(), doc.id)).toList());
     return Rx.combineLatest2(
@@ -578,5 +586,28 @@ class FirestoreService {
 
     await batch.commit();
     await checkAndUpdateOrderStatusAfterProduction(stockItemToDeallocate.orderId!);
+  }
+
+  // ##### NOVO: FUNÇÃO DE MIGRAÇÃO PARA ATUALIZAR STATUS ANTIGOS #####
+  Future<int> runStatusMigrationForOldOrders() async {
+    debugPrint('Iniciando migração de status de pedidos antigos...');
+    int updatedCount = 0;
+    
+    // ##### CORREÇÃO AQUI: Busca apenas pedidos em "Aguardando Entrega" #####
+    final querySnapshot = await _db.collection('orders')
+        .where('status', isEqualTo: OrderStatus.aguardandoEntrega.name)
+        .get();
+
+    for (final doc in querySnapshot.docs) {
+      final order = Order.fromFirestore(doc.data(), doc.id);
+      debugPrint('Verificando pedido #${order.id?.substring(0,6)}...');
+      // A nossa função principal já contém a lógica correta.
+      // Ela vai verificar se todos os itens foram entregues e, se sim,
+      // e o pagamento não for integral, mudará o status.
+      await checkIfOrderIsFullyCompleted(order.id!);
+      updatedCount++;
+    }
+    debugPrint('Migração concluída. $updatedCount pedidos foram verificados e/ou atualizados.');
+    return updatedCount;
   }
 }

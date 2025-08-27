@@ -11,7 +11,6 @@ import '../models/stock_item_model.dart';
 import '../services/firestore_service.dart';
 import '../services/production_scheduler.dart';
 
-// Helper class for stock opportunities
 class StockOpportunity {
   final Mold mold;
   final List<Product> availableProducts;
@@ -73,6 +72,7 @@ class _ProductionScreenState extends State<ProductionScreen> {
     }
   }
 
+  // ##### DIÁLOGO DE FILTRO ATUALIZADO COM CAMPO DE BUSCA #####
   Future<void> _selectOrderFilter(BuildContext context, List<StockItem> allPendingItems) async {
     final ordersWithPendingItems = allPendingItems
       .where((item) => item.orderId != null)
@@ -101,27 +101,7 @@ class _ProductionScreenState extends State<ProductionScreen> {
 
     final Order? picked = await showDialog<Order>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Filtrar por Pedido'),
-          content: SizedBox(
-            width: 300,
-            child: ListView.builder(
-              shrinkWrap: true,
-              itemCount: candidateOrders.length,
-              itemBuilder: (context, index) {
-                final order = candidateOrders[index];
-                return ListTile(
-                  title: Text(order.clientName),
-                  subtitle: Text('Pedido #${order.id?.substring(0, 6).toUpperCase()}'),
-                  onTap: () => Navigator.of(context).pop(order),
-                );
-              },
-            ),
-          ),
-          actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar'))],
-        );
-      }
+      builder: (context) => _OrderFilterDialog(candidateOrders: candidateOrders),
     );
 
     if (picked != null) {
@@ -147,11 +127,7 @@ class _ProductionScreenState extends State<ProductionScreen> {
                   Text('A forma "${opportunity.mold.name}" está ociosa. Qual produto você deseja fabricar?', style: Theme.of(context).textTheme.bodyLarge),
                   const Divider(height: 24),
                   ...opportunity.availableProducts.map((product) {
-                    
-                    final String logoTypeLabel = product.sku.toLowerCase().contains('cleiton premoldados')
-                        ? 'Logo da Empresa'
-                        : 'Em Branco';
-
+                    final String logoTypeLabel = product.sku.toLowerCase().contains('cleiton premoldados') ? 'Logo da Empresa' : 'Em Branco';
                     return ListTile(
                       title: Text(product.name),
                       subtitle: Text('SKU: ${product.sku} | Tipo: $logoTypeLabel'),
@@ -168,10 +144,7 @@ class _ProductionScreenState extends State<ProductionScreen> {
     );
 
     if (selectedProduct != null) {
-      final String logoTypeForDb = selectedProduct.sku.toLowerCase().contains('cleiton premoldados')
-          ? 'CLEITON PREMOLDADOS'
-          : 'Em Branco';
-
+      final String logoTypeForDb = selectedProduct.sku.toLowerCase().contains('cleiton premoldados') ? 'CLEITON PREMOLDADOS' : 'Em Branco';
       final tempPlanItem = ProductionPlanItem(
         productId: selectedProduct.id!,
         productName: selectedProduct.name,
@@ -214,15 +187,14 @@ class _ProductionScreenState extends State<ProductionScreen> {
                   qtyProduced = planItem.quantityToProduce;
                 }
                 
-                // ##### ALTERAÇÃO AQUI: CHAMA O NOVO MÉTODO #####
-                if (planItem.sourceItems.isEmpty) { // Produção para estoque
+                if (planItem.sourceItems.isEmpty) {
                   final product = (await _firestoreService.getProductById(planItem.productId))!;
                   await _firestoreService.addStockItemsToProductionQueue(
                     product: product, 
                     quantity: qtyProduced, 
                     logoType: planItem.logoType
                   );
-                } else { // Produção para pedido
+                } else {
                   final itemsToLaunch = planItem.sourceItems.take(qtyProduced).toList();
                   await _firestoreService.launchProductionRun(itemsToLaunch);
                   if (planItem.sourceItems.first.orderId != null) {
@@ -458,6 +430,85 @@ class _StockOpportunityHeader extends StatelessWidget {
           Expanded(child: Divider()),
         ],
       ),
+    );
+  }
+}
+
+// ##### NOVO WIDGET: DIÁLOGO DE FILTRO COM BUSCA #####
+class _OrderFilterDialog extends StatefulWidget {
+  final List<Order> candidateOrders;
+  const _OrderFilterDialog({required this.candidateOrders});
+
+  @override
+  State<_OrderFilterDialog> createState() => _OrderFilterDialogState();
+}
+
+class _OrderFilterDialogState extends State<_OrderFilterDialog> {
+  late List<Order> _filteredOrders;
+  final _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _filteredOrders = List.from(widget.candidateOrders);
+    _searchController.addListener(_filterList);
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_filterList);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _filterList() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filteredOrders = widget.candidateOrders.where((order) {
+        final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? '';
+        return order.clientName.toLowerCase().contains(query) ||
+               orderIdShort.toLowerCase().contains(query);
+      }).toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Filtrar por Pedido'),
+      content: SizedBox(
+        width: 400,
+        height: 500,
+        child: Column(
+          children: [
+            TextField(
+              controller: _searchController,
+              decoration: const InputDecoration(
+                labelText: 'Buscar por cliente ou ID...',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _filteredOrders.length,
+                itemBuilder: (context, index) {
+                  final order = _filteredOrders[index];
+                  return ListTile(
+                    title: Text(order.clientName),
+                    subtitle: Text('Pedido #${order.id?.substring(0, 6).toUpperCase()}'),
+                    onTap: () => Navigator.of(context).pop(order),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar'))],
     );
   }
 }

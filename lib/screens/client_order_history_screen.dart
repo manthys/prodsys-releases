@@ -84,23 +84,27 @@ class ClientOrderHistoryScreen extends StatelessWidget {
   }
 }
 
+// ##### SWITCH ATUALIZADO #####
 Color _getStatusColor(OrderStatus status) {
   switch (status) {
     case OrderStatus.cotacao: return Colors.blueGrey;
     case OrderStatus.pedido: return Colors.orange;
     case OrderStatus.emFabricacao: return Colors.blue;
     case OrderStatus.aguardandoEntrega: return Colors.purple;
+    case OrderStatus.aguardandoPagamentoFinal: return Colors.amber.shade700;
     case OrderStatus.finalizado: return Colors.green;
     case OrderStatus.cancelado: return Colors.red;
   }
 }
 
+// ##### SWITCH ATUALIZADO #####
 String _getStatusName(OrderStatus status) {
   switch (status) {
     case OrderStatus.cotacao: return 'Cotação';
     case OrderStatus.pedido: return 'Pedido';
     case OrderStatus.emFabricacao: return 'Em Fabricação';
     case OrderStatus.aguardandoEntrega: return 'Aguardando Entrega';
+    case OrderStatus.aguardandoPagamentoFinal: return 'Aguardando Pagamento Final';
     case OrderStatus.finalizado: return 'Finalizado';
     case OrderStatus.cancelado: return 'Cancelado';
   }

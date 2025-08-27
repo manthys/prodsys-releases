@@ -5,7 +5,15 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'order_item_model.dart';
 import 'address_model.dart';
 
-enum OrderStatus { cotacao, pedido, emFabricacao, aguardandoEntrega, finalizado, cancelado }
+enum OrderStatus { 
+  cotacao, 
+  pedido, 
+  emFabricacao, 
+  aguardandoEntrega, 
+  aguardandoPagamentoFinal, // <<< ADICIONE ESTA LINHA
+  finalizado, 
+  cancelado 
+}
 enum PaymentStatus { aguardandoSinal, sinalPago, pagoIntegralmente }
 
 class Order {
