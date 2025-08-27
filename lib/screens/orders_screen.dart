@@ -6,7 +6,6 @@ import '../models/order_model.dart';
 import '../services/firestore_service.dart';
 import 'order_details_screen.dart';
 
-// Convertido para StatefulWidget com TabController
 class OrdersScreen extends StatefulWidget {
   const OrdersScreen({super.key});
 
@@ -27,16 +26,15 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _searchController.addListener(() {
+      if (mounted) setState(() => _searchTerm = _searchController.text);
+    });
+    // Adiciona um listener para reconstruir a tela ao trocar de aba (para esconder/mostrar os filtros)
+    _tabController.addListener(() {
       if (mounted) {
         setState(() {
-          _searchTerm = _searchController.text;
-        });
-      }
-    });
-    _tabController.addListener(() {
-      if (_tabController.indexIsChanging) {
-        setState(() {
-          _selectedStatusFilters.clear();
+          if (_tabController.indexIsChanging) {
+            _selectedStatusFilters.clear();
+          }
         });
       }
     });
@@ -63,25 +61,37 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
-          children: availableFilters.map((status) {
-            final isSelected = _selectedStatusFilters.contains(status);
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4.0),
-              child: FilterChip(
-                label: Text(_getStatusName(status)),
-                selected: isSelected,
-                onSelected: (bool selected) {
-                  setState(() {
-                    if (selected) {
-                      _selectedStatusFilters.add(status);
-                    } else {
-                      _selectedStatusFilters.remove(status);
-                    }
-                  });
-                },
+          children: [
+            // Botão para limpar filtros, aparece se algum estiver selecionado
+            if (_selectedStatusFilters.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(right: 8.0),
+                child: ActionChip(
+                  avatar: const Icon(Icons.clear, size: 16),
+                  label: const Text('Limpar'),
+                  onPressed: () => setState(() => _selectedStatusFilters.clear()),
+                ),
               ),
-            );
-          }).toList(),
+            ...availableFilters.map((status) {
+              final isSelected = _selectedStatusFilters.contains(status);
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 4.0),
+                child: FilterChip(
+                  label: Text(_getStatusName(status)),
+                  selected: isSelected,
+                  onSelected: (bool selected) {
+                    setState(() {
+                      if (selected) {
+                        _selectedStatusFilters.add(status);
+                      } else {
+                        _selectedStatusFilters.remove(status);
+                      }
+                    });
+                  },
+                ),
+              );
+            }).toList(),
+          ],
         ),
       ),
     );
@@ -98,7 +108,13 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
             Tab(text: 'Finalizados & Cancelados'),
           ],
         ),
-        // O BOTÃO DE MIGRAÇÃO FOI REMOVIDO DAQUI
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.cleaning_services),
+            tooltip: 'Atualizar Status de Pedidos Antigos',
+            onPressed: () { /* Sua função de migração, se ainda precisar dela */ },
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(60.0),
           child: Padding(
@@ -125,51 +141,52 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
           ),
         ),
       ),
-      body: StreamBuilder<List<Order>>(
-        stream: firestoreService.getOrdersStream(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Erro: ${snapshot.error}'));
-          }
-          if (!snapshot.hasData || snapshot.data!.isEmpty) {
-            return const Center(
-                child: Text('Nenhuma cotação ou pedido encontrado.'));
-          }
-          
-          final allOrders = snapshot.data!;
-          
-          final searchedOrders = allOrders.where((order) {
-            final query = _searchTerm.toLowerCase();
-            final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? '';
-            return order.clientName.toLowerCase().contains(query) ||
-                   orderIdShort.toLowerCase().contains(query);
-          }).toList();
+      body: Column(
+        children: [
+          // ##### ALTERAÇÃO AQUI: Filtros só aparecem na primeira aba #####
+          if (_tabController.index == 0) _buildStatusFilters(),
+          Expanded(
+            child: StreamBuilder<List<Order>>(
+              stream: firestoreService.getOrdersStream(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                if (snapshot.hasError) {
+                  return Center(child: Text('Erro: ${snapshot.error}'));
+                }
+                if (!snapshot.hasData || snapshot.data!.isEmpty) {
+                  return const Center(
+                      child: Text('Nenhuma cotação ou pedido encontrado.'));
+                }
+                
+                final allOrders = snapshot.data!;
+                
+                final searchedOrders = allOrders.where((order) {
+                  final query = _searchTerm.toLowerCase();
+                  final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? '';
+                  return order.clientName.toLowerCase().contains(query) ||
+                         orderIdShort.toLowerCase().contains(query);
+                }).toList();
 
-          final activeOrders = searchedOrders.where((o) => o.status != OrderStatus.finalizado && o.status != OrderStatus.cancelado).toList();
-          final archivedOrders = searchedOrders.where((o) => o.status == OrderStatus.finalizado || o.status == OrderStatus.cancelado).toList();
+                final activeOrders = searchedOrders.where((o) => o.status != OrderStatus.finalizado && o.status != OrderStatus.cancelado).toList();
+                final archivedOrders = searchedOrders.where((o) => o.status == OrderStatus.finalizado || o.status == OrderStatus.cancelado).toList();
 
-          final filteredActive = _selectedStatusFilters.isEmpty
-              ? activeOrders
-              : activeOrders.where((order) => _selectedStatusFilters.contains(order.status)).toList();
+                final filteredActive = _selectedStatusFilters.isEmpty
+                    ? activeOrders
+                    : activeOrders.where((order) => _selectedStatusFilters.contains(order.status)).toList();
 
-          return Column(
-            children: [
-              _buildStatusFilters(),
-              Expanded(
-                child: TabBarView(
+                return TabBarView(
                   controller: _tabController,
                   children: [
                     _buildOrdersList(filteredActive, isArchived: false),
                     _buildOrdersList(archivedOrders, isArchived: true),
                   ],
-                ),
-              ),
-            ],
-          );
-        },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

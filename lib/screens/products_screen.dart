@@ -7,7 +7,6 @@ import '../models/price_variation_model.dart';
 import '../services/firestore_service.dart';
 import '../widgets/product_dialog.dart';
 
-// Convertido para StatefulWidget para melhor controle de estado e atualização
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
 
@@ -17,7 +16,6 @@ class ProductsScreen extends StatefulWidget {
 
 class _ProductsScreenState extends State<ProductsScreen> {
   final FirestoreService firestoreService = FirestoreService();
-  // Novo: controlador de busca
   final TextEditingController _searchController = TextEditingController();
   String _searchTerm = '';
 
@@ -91,7 +89,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     
     return Scaffold(
-      // Novo: AppBar com campo de busca
       appBar: AppBar(
         title: const Text('Catálogo de Produtos'),
         bottom: PreferredSize(
@@ -127,7 +124,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
           if (snapshot.hasError) return Center(child: Text('Erro: ${snapshot.error}'));
           if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('Nenhum produto cadastrado.'));
 
-          // Aplica o filtro de busca
           final filteredProducts = snapshot.data!.where((product) {
             final query = _searchTerm.toLowerCase();
             return product.name.toLowerCase().contains(query) || product.sku.toLowerCase().contains(query);
@@ -137,45 +133,48 @@ class _ProductsScreenState extends State<ProductsScreen> {
             return const Center(child: Text('Nenhum produto encontrado com o termo buscado.'));
           }
 
-          return SingleChildScrollView(
+          // ##### ESTRUTURA DE LAYOUT CORRIGIDA PARA ROLAGEM #####
+          return ListView(
             padding: const EdgeInsets.all(16.0),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: DataTable(
-                columns: const [
-                  DataColumn(label: Text('Nome/Descrição', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('SKU', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Tipo de Forma', style: TextStyle(fontWeight: FontWeight.bold))),
-                  DataColumn(label: Text('Preço S/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
-                  DataColumn(label: Text('Preço C/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
-                  DataColumn(label: Text('Adic. Logo', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
-                  DataColumn(label: Text('Ações', style: TextStyle(fontWeight: FontWeight.bold))),
-                ],
-                rows: filteredProducts.map((product) {
-                  final priceWithoutNota = _findPrice(product, 'Sem Nota');
-                  final priceWithNota = _findPrice(product, 'Com Nota');
+            children: [
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Nome/Descrição', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('SKU', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Tipo de Forma', style: TextStyle(fontWeight: FontWeight.bold))),
+                    DataColumn(label: Text('Preço S/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                    DataColumn(label: Text('Preço C/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                    DataColumn(label: Text('Adic. Logo', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                    DataColumn(label: Text('Ações', style: TextStyle(fontWeight: FontWeight.bold))),
+                  ],
+                  rows: filteredProducts.map((product) {
+                    final priceWithoutNota = _findPrice(product, 'Sem Nota');
+                    final priceWithNota = _findPrice(product, 'Com Nota');
 
-                  return DataRow(cells: [
-                    DataCell(Text(product.name)),
-                    DataCell(Text(product.sku)),
-                    DataCell(Text(product.moldType)),
-                    DataCell(Text(currencyFormatter.format(priceWithoutNota.price))),
-                    DataCell(Text(currencyFormatter.format(priceWithNota.price))),
-                    DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
-                    DataCell(Row(
-                      children: [
-                        IconButton(icon: const Icon(Icons.edit, color: Colors.blue), tooltip: 'Editar', onPressed: () => _showProductDialog(product: product)),
-                        IconButton(
-                          icon: const Icon(Icons.delete_outline, color: Colors.red),
-                          tooltip: 'Excluir',
-                          onPressed: () => _confirmDelete(context, product),
-                        ),
-                      ],
-                    )),
-                  ]);
-                }).toList(),
+                    return DataRow(cells: [
+                      DataCell(Text(product.name)),
+                      DataCell(Text(product.sku)),
+                      DataCell(Text(product.moldType)),
+                      DataCell(Text(currencyFormatter.format(priceWithoutNota.price))),
+                      DataCell(Text(currencyFormatter.format(priceWithNota.price))),
+                      DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
+                      DataCell(Row(
+                        children: [
+                          IconButton(icon: const Icon(Icons.edit, color: Colors.blue), tooltip: 'Editar', onPressed: () => _showProductDialog(product: product)),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, color: Colors.red),
+                            tooltip: 'Excluir',
+                            onPressed: () => _confirmDelete(context, product),
+                          ),
+                        ],
+                      )),
+                    ]);
+                  }).toList(),
+                ),
               ),
-            ),
+            ],
           );
         },
       ),

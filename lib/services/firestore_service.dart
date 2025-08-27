@@ -47,7 +47,7 @@ class FirestoreService {
     const projectId = "sistema-gestao-cliente";
     const region = "us-central1";
     const functionName = "reallocateStockItem";
-    const mySecretKey = "COLOQUE-AQUI-SUA-SENHA-LONGA-E-ALEATORIA";
+    const mySecretKey = "964069882pP@";
 
     final url = Uri.parse('https://$region-$projectId.cloudfunctions.net/$functionName');
     final body = json.encode({

@@ -1,3 +1,5 @@
+// lib/screens/stock_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -20,8 +22,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   final FirestoreService _firestoreService = FirestoreService();
   Product? _selectedProductFilter;
   List<StockItemStatus> _selectedStatusFilters = [];
-
-  // Variável para forçar a reconstrução do StreamBuilder
   final BehaviorSubject<void> _reloadSubject = BehaviorSubject<void>();
 
   @override
@@ -36,7 +36,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   @override
   void dispose() {
     _tabController.dispose();
-    _reloadSubject.close(); // Fechar o subject para evitar memory leaks
+    _reloadSubject.close();
     super.dispose();
   }
 
@@ -197,7 +197,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
         SnackBar(content: Text('$quantity item(ns) alocados para o Pedido #${order.id?.substring(0,6).toUpperCase()} com sucesso!'), backgroundColor: Colors.green),
       );
       
-      // Força a recarga da tela
       _reloadSubject.add(null);
     }
   }
@@ -251,8 +250,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$quantityToDeallocate item(ns) devolvidos ao estoque geral.'), backgroundColor: Colors.orange),
       );
-
-      // Força a recarga da tela
+      
       _reloadSubject.add(null);
     }
   }
@@ -268,7 +266,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
           tabs: const [Tab(text: 'Estoque Disponível (Geral)'), Tab(text: 'Estoque Alocado (Pedidos)')],
         ),
         actions: [
-          // ##### NOVO BOTÃO DE RECARREGAR #####
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Recarregar Lista',
@@ -291,11 +288,10 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
         ],
       ),
       body: StreamBuilder(
-        // O StreamBuilder agora escuta a combinação dos streams e do nosso gatilho de recarga
         stream: Rx.combineLatest3(
           _firestoreService.getStockItemsStream(),
           _firestoreService.getOrdersStream(),
-          _reloadSubject.stream.startWith(null), // startWith(null) garante que o stream emita um valor inicial
+          _reloadSubject.stream.startWith(null),
           (List<StockItem> items, List<Order> orders, _) => {'items': items, 'orders': orders}
         ),
         builder: (context, snapshot) {
@@ -364,6 +360,11 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     final StockItem item = group['item'];
     final int count = (group['items'] as List<StockItem>).length;
     final bool canBeReallocated = item.status == StockItemStatus.emEstoque;
+
+    // ##### ALTERAÇÃO AQUI: Lógica para construir o texto do pedido #####
+    final orderText = item.orderId != null
+      ? 'Pedido: #${item.orderId?.substring(0, 6).toUpperCase()} - ${item.clientName}'
+      : 'Estoque Geral';
     
     return Card(
       child: ListTile(
@@ -373,7 +374,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
           child: Tooltip(message: _getStatusName(item.status), child: Icon(_getStatusIcon(item.status))),
         ),
         title: Text('${item.sku} - ${item.productName}', style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text('Status: ${_getStatusName(item.status)} | Logo: ${item.logoType}\nPedido: ${item.orderId != null ? ('#' + (item.orderId?.substring(0, 6).toUpperCase() ?? '')) : 'Estoque Geral'}'),
+        subtitle: Text('Status: ${_getStatusName(item.status)} | Logo: ${item.logoType}\n$orderText'),
         isThreeLine: true,
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
