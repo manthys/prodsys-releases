@@ -9,7 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../widgets/currency_input_formatter.dart'; // <<< IMPORT CORRETO PARA O NOSSO FORMATADOR MANUAL
+import '../widgets/currency_input_formatter.dart';
 import '../models/delivery_model.dart';
 import '../models/order_model.dart';
 import '../models/order_item_model.dart';
@@ -553,10 +553,26 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
+  // ##### FUNÇÃO DE VERIFICAÇÃO ATUALIZADA E INTELIGENTE #####
   void _forceRecheckStatus() async {
-    await _firestoreService.checkIfOrderIsFullyCompleted(_currentOrder.id!);
-    _showSnackBar('Verificação de status concluída.');
-    _reloadOrder();
+    if (_currentOrder.id == null) return;
+    _showSnackBar('Verificando status...', isError: false);
+
+    try {
+      // Se o pedido está em fabricação, checa se a produção terminou
+      if (_currentOrder.status == OrderStatus.emFabricacao) {
+        await _firestoreService.checkAndUpdateOrderStatusAfterProduction(_currentOrder.id!);
+      } 
+      // Para outros status ativos, checa se pode ser finalizado/movido para aguardando pagamento
+      else if (_currentOrder.status == OrderStatus.aguardandoEntrega || _currentOrder.status == OrderStatus.aguardandoPagamentoFinal) {
+        await _firestoreService.checkIfOrderIsFullyCompleted(_currentOrder.id!);
+      }
+      _showSnackBar('Verificação de status concluída.');
+    } catch(e) {
+      _showSnackBar('Erro ao verificar status: $e', isError: true);
+    } finally {
+      _reloadOrder();
+    }
   }
   
   @override
@@ -695,7 +711,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
   Widget _buildItemsSection() {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Itens do Pedido:', style: Theme.of(context).textTheme.titleMedium), const Divider(), ..._currentOrder.items.map((item) => ListTile(contentPadding: EdgeInsets.zero, title: Text(item.productName), subtitle: Text('SKU: ${item.sku}\n${item.quantity} x ${currencyFormatter.format(item.finalUnitPrice)}'), trailing: Text(currencyFormatter.format(item.totalPrice), style: const TextStyle(fontWeight: FontWeight.bold)), isThreeLine: true)).toList()]);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Itens do Pedido:', style: Theme.of(context).textTheme.titleMedium), const Divider(), ..._currentOrder.items.map((item) => ListTile(contentPadding: EdgeInsets.zero, title: Text(item.productName), subtitle: Text('SKU: ${item.sku}\n${item.quantity} x ${currencyFormatter.format(item.finalUnitPrice)}'), trailing: Text(currencyFormatter.format(item.totalPrice), style: const TextStyle(fontWeight: FontWeight.bold)), isThreeLine: true))]);
   }
   
   Widget _buildTotalsSection() {
@@ -758,8 +774,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       String url = entry.value;
       return ListTile(leading: const Icon(Icons.file_present, color: Colors.blue), title: Text('Comprovante ${index + 1}'), subtitle: const Text('Clique para visualizar', style: TextStyle(color: Colors.blue)), onTap: () async {
         final uri = Uri.parse(url);
-        if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
-        else _showSnackBar('Não foi possível abrir o anexo.', isError: true);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        } else {
+          _showSnackBar('Não foi possível abrir o anexo.', isError: true);
+        }
       });
     }).toList())), const SizedBox(height: 24)]);
   }
@@ -853,9 +872,9 @@ class _AllocationDialogState extends State<_AllocationDialog> {
   @override
   void initState() {
     super.initState();
-    widget.groupedStock.keys.forEach((key) {
+    for (var key in widget.groupedStock.keys) {
       _sourceSelection[key] = true;
-    });
+    }
     _calculateNeeded();
   }
 
@@ -940,7 +959,7 @@ class _AllocationDialogState extends State<_AllocationDialog> {
                     );
                   }).toList(),
                 );
-              }).toList(),
+              }),
             ],
           ),
         ),

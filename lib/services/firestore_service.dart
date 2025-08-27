@@ -310,6 +310,7 @@ class FirestoreService {
   }
   Stream<List<StockItem>> getStockItemsStream() => _db.collection('stock_items').orderBy('creationDate', descending: true).snapshots().map((snapshot) => snapshot.docs.map((doc) => StockItem.fromFirestore(doc.data(), doc.id)).toList());
   Stream<List<StockItem>> getStockItemsByStatus(StockItemStatus status) => _db.collection('stock_items').where('status', isEqualTo: status.name).orderBy('deliveryDeadline').snapshots().map((snapshot) => snapshot.docs.map((doc) => StockItem.fromFirestore(doc.data(), doc.id)).toList());
+  
   Future<void> launchProductionRun(List<StockItem> itemsToLaunch) async {
     final writeBatch = _db.batch();
     for (final item in itemsToLaunch) {
@@ -318,19 +319,29 @@ class FirestoreService {
     }
     await writeBatch.commit();
   }
+
+  // ##### FUNÇÃO ATUALIZADA COM O DELAY #####
   Future<void> checkAndUpdateOrderStatusAfterProduction(String orderId) async {
+    // Adiciona uma pequena espera para dar tempo ao Firestore de processar o batch anterior
+    await Future.delayed(const Duration(seconds: 2));
+
     final order = await getOrderById(orderId);
     if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado || order.status == OrderStatus.aguardandoEntrega || order.status == OrderStatus.aguardandoPagamentoFinal) return;
+    
     final totalItemsInOrder = order.items.fold<int>(0, (sum, item) => sum + item.quantity);
+    
     if (totalItemsInOrder == 0) {
         await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
         return;
     }
+    
     final producedItemsSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).where('status', whereIn: [StockItemStatus.emEstoque.name, StockItemStatus.emTransito.name, StockItemStatus.entregue.name]).get();
+    
     if (producedItemsSnapshot.docs.length >= totalItemsInOrder) {
       await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
     }
   }
+
   Future<void> createDeliveryAndUpdateStock(Delivery delivery, List<StockItem> stockItemsToUpdate) async {
     final batch = _db.batch();
     final deliveryData = delivery.toJson();
@@ -588,12 +599,10 @@ class FirestoreService {
     await checkAndUpdateOrderStatusAfterProduction(stockItemToDeallocate.orderId!);
   }
 
-  // ##### NOVO: FUNÇÃO DE MIGRAÇÃO PARA ATUALIZAR STATUS ANTIGOS #####
   Future<int> runStatusMigrationForOldOrders() async {
     debugPrint('Iniciando migração de status de pedidos antigos...');
     int updatedCount = 0;
     
-    // ##### CORREÇÃO AQUI: Busca apenas pedidos em "Aguardando Entrega" #####
     final querySnapshot = await _db.collection('orders')
         .where('status', isEqualTo: OrderStatus.aguardandoEntrega.name)
         .get();
@@ -601,9 +610,6 @@ class FirestoreService {
     for (final doc in querySnapshot.docs) {
       final order = Order.fromFirestore(doc.data(), doc.id);
       debugPrint('Verificando pedido #${order.id?.substring(0,6)}...');
-      // A nossa função principal já contém a lógica correta.
-      // Ela vai verificar se todos os itens foram entregues e, se sim,
-      // e o pagamento não for integral, mudará o status.
       await checkIfOrderIsFullyCompleted(order.id!);
       updatedCount++;
     }
