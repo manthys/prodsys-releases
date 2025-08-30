@@ -72,7 +72,6 @@ class _ProductionScreenState extends State<ProductionScreen> {
     }
   }
 
-  // ##### DIÁLOGO DE FILTRO ATUALIZADO COM CAMPO DE BUSCA #####
   Future<void> _selectOrderFilter(BuildContext context, List<StockItem> allPendingItems) async {
     final ordersWithPendingItems = allPendingItems
       .where((item) => item.orderId != null)
@@ -127,7 +126,8 @@ class _ProductionScreenState extends State<ProductionScreen> {
                   Text('A forma "${opportunity.mold.name}" está ociosa. Qual produto você deseja fabricar?', style: Theme.of(context).textTheme.bodyLarge),
                   const Divider(height: 24),
                   ...opportunity.availableProducts.map((product) {
-                    final String logoTypeLabel = product.sku.toLowerCase().contains('cleiton premoldados') ? 'Logo da Empresa' : 'Em Branco';
+                    // ##### ALTERAÇÃO: Lógica para o label do tipo de logo #####
+                    final String logoTypeLabel = product.sku.toLowerCase().contains('cleiton premoldados') ? 'Logo da Empresa' : 'Nenhum';
                     return ListTile(
                       title: Text(product.name),
                       subtitle: Text('SKU: ${product.sku} | Tipo: $logoTypeLabel'),
@@ -144,7 +144,9 @@ class _ProductionScreenState extends State<ProductionScreen> {
     );
 
     if (selectedProduct != null) {
-      final String logoTypeForDb = selectedProduct.sku.toLowerCase().contains('cleiton premoldados') ? 'CLEITON PREMOLDADOS' : 'Em Branco';
+      // ##### ALTERAÇÃO INICIA AQUI: Padroniza para "Nenhum" #####
+      final String logoTypeForDb = selectedProduct.sku.toLowerCase().contains('cleiton premoldados') ? 'Própria' : 'Nenhum';
+      // ##### ALTERAÇÃO TERMINA AQUI #####
       final tempPlanItem = ProductionPlanItem(
         productId: selectedProduct.id!,
         productName: selectedProduct.name,
@@ -434,7 +436,6 @@ class _StockOpportunityHeader extends StatelessWidget {
   }
 }
 
-// ##### NOVO WIDGET: DIÁLOGO DE FILTRO COM BUSCA #####
 class _OrderFilterDialog extends StatefulWidget {
   final List<Order> candidateOrders;
   const _OrderFilterDialog({required this.candidateOrders});

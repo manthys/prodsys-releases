@@ -37,6 +37,10 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   final _deliveryCityController = TextEditingController();
   final _deliveryStateController = TextEditingController();
   final _discountController = TextEditingController();
+  
+  // ##### ALTERAÇÃO INICIA AQUI #####
+  final _clientController = TextEditingController();
+  // ##### ALTERAÇÃO TERMINA AQUI #####
 
   Client? _selectedClient;
   List<Client> _allClients = [];
@@ -75,6 +79,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     _deliveryCityController.dispose();
     _deliveryStateController.dispose();
     _discountController.dispose();
+    _clientController.dispose(); // ##### ALTERAÇÃO: Adicionado dispose
     super.dispose();
   }
 
@@ -98,7 +103,16 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
 
   void _populateFormForEditing() {
     final order = widget.existingOrder!;
-    _selectedClient = _allClients.firstWhere((c) => c.id == order.clientId, orElse: () => _allClients.first);
+    // ##### ALTERAÇÃO INICIA AQUI #####
+    try {
+      _selectedClient = _allClients.firstWhere((c) => c.id == order.clientId);
+      _clientController.text = _selectedClient!.name;
+    } catch (e) {
+      _selectedClient = null;
+      _clientController.text = order.clientName; // Mostra o nome antigo se o cliente foi deletado
+    }
+    // ##### ALTERAÇÃO TERMINA AQUI #####
+    
     _shippingCostController.text = order.shippingCost.toString();
     _discountController.text = order.discount.toString();
     _notesController.text = order.notes ?? '';
@@ -179,10 +193,9 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                             child: ListTile(
                               title: Text(product.name),
                               isThreeLine: true,
-                              // ##### SUBTÍTULO ATUALIZADO PARA USAR RichText COM CORES #####
                               subtitle: RichText(
                                 text: TextSpan(
-                                  style: Theme.of(context).textTheme.bodySmall, // Estilo padrão
+                                  style: Theme.of(context).textTheme.bodySmall,
                                   children: <TextSpan>[
                                     TextSpan(text: 'SKU: ${product.sku}\n'),
                                     const TextSpan(text: 'S/ Nota: '),
@@ -372,6 +385,22 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
       _finalAmount = _totalItemsAmount + _shippingCost - _discount;
     });
   }
+  
+  // ##### ALTERAÇÃO: Nova função para buscar cliente #####
+  Future<void> _showClientSearchDialog() async {
+    final Client? result = await showDialog<Client>(
+      context: context,
+      builder: (context) => _ClientSearchDialog(allClients: _allClients),
+    );
+
+    if (result != null) {
+      setState(() {
+        _selectedClient = result;
+        _clientController.text = result.name;
+        _updateDeliveryAddressFields(result.deliveryAddress);
+      });
+    }
+  }
 
   void _saveOrder() async {
     final currentUser = _authService.currentUser;
@@ -434,19 +463,21 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
               Text('Dados Principais', style: Theme.of(context).textTheme.titleLarge),
               const Divider(),
               const SizedBox(height: 8),
-              DropdownButtonFormField<Client>(
-                value: _selectedClient,
-                hint: const Text('Selecione um Cliente'),
-                decoration: const InputDecoration(labelText: 'Cliente', border: OutlineInputBorder()),
-                items: _allClients.map((client) => DropdownMenuItem<Client>(value: client, child: Text(client.name))).toList(),
-                onChanged: (client) {
-                  setState(() {
-                    _selectedClient = client;
-                    if (client != null) _updateDeliveryAddressFields(client.deliveryAddress);
-                  });
-                },
-                validator: (value) => value == null ? 'Selecione um cliente' : null,
+              
+              // ##### ALTERAÇÃO INICIA AQUI: Substituição do Dropdown por campo de busca #####
+              TextFormField(
+                controller: _clientController,
+                readOnly: true,
+                decoration: const InputDecoration(
+                  labelText: 'Cliente',
+                  border: OutlineInputBorder(),
+                  suffixIcon: Icon(Icons.search),
+                ),
+                onTap: _showClientSearchDialog,
+                validator: (value) => _selectedClient == null ? 'Selecione um cliente' : null,
               ),
+              // ##### ALTERAÇÃO TERMINA AQUI #####
+
               const SizedBox(height: 16),
               Text('Forma de Pagamento', style: Theme.of(context).textTheme.titleSmall),
               Row(
@@ -585,6 +616,84 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
           Text(_currencyFormatter.format(value), style: style.copyWith(color: valueColor)),
         ],
       ),
+    );
+  }
+}
+
+// ##### ALTERAÇÃO: Novo widget para o diálogo de busca de cliente #####
+class _ClientSearchDialog extends StatefulWidget {
+  final List<Client> allClients;
+  const _ClientSearchDialog({required this.allClients});
+
+  @override
+  State<_ClientSearchDialog> createState() => _ClientSearchDialogState();
+}
+
+class _ClientSearchDialogState extends State<_ClientSearchDialog> {
+  late List<Client> _filteredClients;
+  final _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _filteredClients = List.from(widget.allClients);
+    _searchController.addListener(_filterList);
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_filterList);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _filterList() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filteredClients = widget.allClients.where((client) {
+        return client.name.toLowerCase().contains(query);
+      }).toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Selecionar Cliente'),
+      content: SizedBox(
+        width: 400,
+        height: 500,
+        child: Column(
+          children: [
+            TextField(
+              controller: _searchController,
+              decoration: const InputDecoration(
+                labelText: 'Buscar por nome...',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _filteredClients.length,
+                itemBuilder: (context, index) {
+                  final client = _filteredClients[index];
+                  return ListTile(
+                    title: Text(client.name),
+                    onTap: () => Navigator.of(context).pop(client),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar'))
+      ],
     );
   }
 }

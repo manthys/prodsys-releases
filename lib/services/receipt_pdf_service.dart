@@ -5,13 +5,12 @@ import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-// Mantendo sua classe manual, já que o pacote apresentou problemas
 import '../models/order_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
 
 class ReceiptPdfService {
-  Future<void> generateAndShowPdf(Order order, Client client, CompanySettings company) async {
+  Future<void> generateAndShowPdf(Order order, Client client, CompanySettings company, {String? recipientName}) async {
     final pdf = pw.Document();
     final font = await PdfGoogleFonts.robotoRegular();
     final boldFont = await PdfGoogleFonts.robotoBold();
@@ -29,6 +28,8 @@ class ReceiptPdfService {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     
     final valueInWords = NumeroPorExtenso.escrever(order.finalAmount);
+    
+    final nameOnReceipt = recipientName ?? client.name;
 
     pdf.addPage(
       pw.Page(
@@ -39,7 +40,6 @@ class ReceiptPdfService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
-              // 1. Cabeçalho da Empresa
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
@@ -47,7 +47,6 @@ class ReceiptPdfService {
                   pw.Row(children: [
                     if (logoImage != null) pw.Image(logoImage, height: 60),
                     if (logoImage != null) pw.SizedBox(width: 20),
-                    // ##### ALTERAÇÃO 1: INFORMAÇÕES DA EMPRESA MAIS DETALHADAS #####
                     pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
@@ -73,17 +72,15 @@ class ReceiptPdfService {
               pw.Divider(height: 30, thickness: 2),
               pw.SizedBox(height: 30),
               
-              // 2. Corpo do Recibo
               pw.RichText(
                 text: pw.TextSpan(
                   style: const pw.TextStyle(fontSize: 12, height: 1.5),
                   children: [
                     const pw.TextSpan(text: 'Recebemos de '),
-                    // ##### ALTERAÇÃO 2: CORRIGIDO O TEXTO DO CLIENTE #####
                     pw.TextSpan(
                       text: client.cnpj != null && client.cnpj!.isNotEmpty 
-                            ? '${client.name.toUpperCase()} (CNPJ/CPF: ${client.cnpj})' 
-                            : client.name.toUpperCase(), 
+                          ? '${nameOnReceipt.toUpperCase()} (CNPJ/CPF: ${client.cnpj})' 
+                          : nameOnReceipt.toUpperCase(), 
                       style: pw.TextStyle(fontWeight: pw.FontWeight.bold)
                     ),
                     const pw.TextSpan(text: ', a importância de '),
@@ -95,7 +92,6 @@ class ReceiptPdfService {
               ),
               pw.SizedBox(height: 50),
               
-              // 3. Local e Data
               pw.Align(
                 alignment: pw.Alignment.centerRight,
                 child: pw.Text(
@@ -105,7 +101,6 @@ class ReceiptPdfService {
               ),
               pw.SizedBox(height: 80),
 
-              // 4. Assinatura
               pw.Align(
                 alignment: pw.Alignment.center,
                 child: pw.Column(
@@ -123,16 +118,14 @@ class ReceiptPdfService {
               ),
               pw.Spacer(),
 
-              // 5. Rodapé
               pw.Align(
                 alignment: pw.Alignment.center,
                 child: pw.Column(
                   children: [
-                     pw.Text('Este recibo comprova o pagamento integral do pedido especificado.', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey)),
-                     pw.SizedBox(height: 10),
-                     // ##### ALTERAÇÃO 3: ADICIONADO SEU RODAPÉ #####
-                     pw.Text('Desenvolvido por Manthysr | Contato: cmanthysr@gmail.com', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey)),
-                  ]
+                      pw.Text('Este recibo comprova o pagamento integral do pedido especificado.', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey)),
+                      pw.SizedBox(height: 10),
+                      pw.Text('Desenvolvido por Manthysr | Contato: cmanthysr@gmail.com', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey)),
+                    ]
                 )
               )
             ],
@@ -144,7 +137,6 @@ class ReceiptPdfService {
   }
 }
 
-// Sua classe manual para escrever números por extenso
 class NumeroPorExtenso {
   static const _unidades = [
     '', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove',
@@ -192,23 +184,26 @@ class NumeroPorExtenso {
     if (n < 0) return '';
     if (n < 20) return _unidades[n];
     if (n < 100) {
-      return _dezenas[n ~/ 10] + ((n % 10 > 0) ? ' e ' + _unidades[n % 10] : '');
+      return _dezenas[n ~/ 10] + ((n % 10 > 0) ? ' e ${_unidades[n % 10]}' : '');
     }
     if (n < 1000) {
       if (n == 100) return 'cem';
-      return _centenas[n ~/ 100] + ((n % 100 > 0) ? ' e ' + _converterInteiro(n % 100) : '');
+      return _centenas[n ~/ 100] + ((n % 100 > 0) ? ' e ${_converterInteiro(n % 100)}' : '');
     }
     if (n < 1000000) {
       String milhar = _converterInteiro(n ~/ 1000);
-      if (n ~/ 1000 == 1) milhar = 'mil'; else milhar += ' mil';
+      if (n ~/ 1000 == 1) {
+        milhar = 'mil';
+      } else {
+        milhar += ' mil';
+      }
       
       if (n % 1000 == 0) return milhar;
-      // Lógica para evitar "mil e cem" -> "mil e cem" e "dois mil e cem" -> "dois mil e cem"
       if (n % 1000 < 100 || n % 100 == 0) {
-        return milhar + ' e ' + _converterInteiro(n % 1000);
+        return '$milhar e ${_converterInteiro(n % 1000)}';
       }
-      return milhar + ', ' + _converterInteiro(n % 1000);
+      return '$milhar, ${_converterInteiro(n % 1000)}';
     }
-    return n.toString(); // Fallback para números maiores
+    return n.toString();
   }
 }

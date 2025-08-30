@@ -23,6 +23,7 @@ import '../services/receipt_pdf_service.dart';
 import '../services/delivery_pdf_service.dart';
 import '../services/production_simulator.dart';
 import '../widgets/delivery_dialog.dart';
+import '../widgets/pickup_dialog.dart' hide DeliverySelectionItem;
 import 'order_form_screen.dart';
 import 'delivery_history_screen.dart';
 
@@ -42,6 +43,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   late Order _currentOrder;
   bool _isGeneratingPdf = false;
   bool _isUploading = false;
+  
+  List<StockItem>? _stockItemsForOrder;
+  bool _isLoadingStockItems = true;
 
   DateTime? _recalculatedDeliveryDate;
   bool _isRecalculatingDate = false;
@@ -52,6 +56,19 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     _currentOrder = widget.order;
     _simulator = ProductionSimulator(_firestoreService);
     _recalculateDateIfNeeded();
+    _loadAssociatedStockItems();
+  }
+  
+  Future<void> _loadAssociatedStockItems() async {
+    if (!mounted) return;
+    setState(() => _isLoadingStockItems = true);
+    final items = await _firestoreService.getStockItemsForOrder(_currentOrder.id!);
+    if (mounted) {
+      setState(() {
+        _stockItemsForOrder = items;
+        _isLoadingStockItems = false;
+      });
+    }
   }
 
   Future<void> _recalculateDateIfNeeded() async {
@@ -72,6 +89,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (updatedOrder != null && mounted) {
       setState(() => _currentOrder = updatedOrder);
       _recalculateDateIfNeeded();
+      _loadAssociatedStockItems();
     }
   }
 
@@ -94,12 +112,39 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   void _generateReceiptPdf() async {
+    final client = await _firestoreService.getClientById(_currentOrder.clientId);
+    if (client == null) {
+      _showSnackBar('Erro: Cliente não encontrado.', isError: true);
+      return;
+    }
+
+    final nameController = TextEditingController(text: client.name);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Gerar Recibo'),
+        content: TextField(
+          controller: nameController,
+          decoration: const InputDecoration(labelText: 'Nome para o Recibo'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Gerar')),
+        ],
+      ),
+    );
+
+    if (confirmed != true || nameController.text.isEmpty) return;
+
     setState(() => _isGeneratingPdf = true);
     try {
       final companySettings = await _firestoreService.getCompanySettings();
-      final client = await _firestoreService.getClientById(_currentOrder.clientId);
-      if (client != null) await _receiptPdfService.generateAndShowPdf(_currentOrder, client, companySettings);
-      else _showSnackBar('Erro: Cliente não encontrado.', isError: true);
+      await _receiptPdfService.generateAndShowPdf(
+        _currentOrder,
+        client,
+        companySettings,
+        recipientName: nameController.text,
+      );
     } catch (e) {
       _showSnackBar('Erro ao gerar Recibo: $e', isError: true);
     } finally {
@@ -455,85 +500,109 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     Navigator.of(context).push(MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: newQuote)));
   }
 
+  // ##### ALTERAÇÃO: Lógica de retirada mais segura #####
   void _registerPickup() async {
-    final bool? confirm = await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Registrar Retirada'),
-        content: const Text('Isso marcará todos os itens do pedido como "Entregues" e gerará uma nota de retirada. Deseja continuar?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
-          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sim, Registrar')),
-        ],
-      ),
-    );
-    
-    if(confirm != true) return;
+    // Busca SOMENTE os itens deste pedido que estão em estoque
+    final itemsReadyForPickup = (_stockItemsForOrder ?? [])
+        .where((item) => item.status == StockItemStatus.emEstoque)
+        .toList();
 
-    final allStockItems = await _firestoreService.getStockItemsStream().first;
-    final itemsToDeliver = allStockItems.where((item) => item.orderId == _currentOrder.id && item.status != StockItemStatus.entregue).toList();
-
-    if (itemsToDeliver.isEmpty) {
-      _showSnackBar('Não há itens pendentes de entrega/retirada.', isError: true);
+    if (itemsReadyForPickup.isEmpty) {
+      _showSnackBar('Não há itens em estoque prontos para retirada deste pedido.', isError: true);
       return;
     }
 
-    setState(() => _isUploading = true);
-    try {
-      final currentUser = _authService.currentUser;
-      final deliveryItems = _currentOrder.items.map((item) => DeliveryItem(
-        productId: item.productId,
-        sku: item.sku,
-        productName: item.productName,
-        quantity: item.quantity
-      )).toList();
-      
-      final newDelivery = Delivery(
-        orderId: _currentOrder.id!,
-        clientName: _currentOrder.clientName,
-        deliveryDate: Timestamp.now(),
-        items: deliveryItems,
-        driverName: 'Retirada na Empresa',
-        vehiclePlate: 'N/A',
-        createdByUserName: currentUser?.displayName ?? currentUser?.email ?? 'N/A',
-      );
-      
-      await _firestoreService.createDeliveryAndUpdateStock(newDelivery, itemsToDeliver);
-      _showSnackBar('Retirada registrada com sucesso!');
-    } catch(e) {
-      _showSnackBar('Erro ao registrar retirada: $e', isError: true);
-    } finally {
-      if(mounted) setState(() => _isUploading = false);
-      _reloadOrder();
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => PickupDialog(order: _currentOrder, itemsReadyForPickup: itemsReadyForPickup),
+    );
+
+    if (result != null) {
+      setState(() => _isUploading = true);
+      try {
+        final List<DeliverySelectionItem> selectedItems = result['selectedItems'] as List<DeliverySelectionItem>;
+        final currentUser = _authService.currentUser;
+        
+        final deliveryItems = selectedItems
+            .map((sel) => DeliveryItem(
+                  productId: sel.productId,
+                  sku: sel.sku,
+                  productName: sel.productName,
+                  quantity: sel.quantityToDeliver,
+                ))
+            .toList();
+
+        final newDelivery = Delivery(
+          orderId: _currentOrder.id!,
+          clientName: _currentOrder.clientName,
+          deliveryDate: Timestamp.now(),
+          items: deliveryItems,
+          driverName: 'Retirada na Empresa',
+          vehiclePlate: 'N/A',
+          createdByUserName: currentUser?.displayName ?? currentUser?.email ?? 'N/A',
+        );
+
+        List<StockItem> stockItemsToUpdate = [];
+        List<StockItem> availableItems = List.from(itemsReadyForPickup);
+        for (var selItem in selectedItems) {
+          var itemsToFind = selItem.quantityToDeliver;
+          var foundItems = availableItems
+              .where((stockItem) => stockItem.productId == selItem.productId)
+              .take(itemsToFind)
+              .toList();
+          stockItemsToUpdate.addAll(foundItems);
+          for (var found in foundItems) {
+            availableItems.remove(found);
+          }
+        }
+        
+        await _firestoreService.createPickupAndUpdateStock(newDelivery, stockItemsToUpdate);
+        _showSnackBar('Retirada registrada com sucesso!');
+      } catch (e) {
+        _showSnackBar('Erro ao registrar retirada: $e', isError: true);
+      } finally {
+        if (mounted) setState(() => _isUploading = false);
+        _reloadOrder();
+      }
     }
   }
 
+  // ##### ALTERAÇÃO: Lógica de entrega mais segura #####
   void _showDeliveryDialog() async {
-    final allStockItems = await _firestoreService.getStockItemsStream().first;
-    final itemsReadyForDelivery = allStockItems.where((item) => item.orderId == _currentOrder.id && item.status == StockItemStatus.emEstoque).toList();
+    // Busca SOMENTE os itens deste pedido que estão em estoque
+    final itemsReadyForDelivery = (_stockItemsForOrder ?? [])
+        .where((item) => item.status == StockItemStatus.emEstoque)
+        .toList();
+
     if (itemsReadyForDelivery.isEmpty) {
       _showSnackBar('Não há itens em estoque prontos para entrega deste pedido.', isError: true);
       return;
     }
+
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => DeliveryDialog(order: _currentOrder, itemsReadyForDelivery: itemsReadyForDelivery),
     );
+
     if (result != null) {
       setState(() => _isUploading = true);
       try {
         final driverName = result['driverName'] as String;
         final vehiclePlate = result['vehiclePlate'] as String;
-        final selectedItems = result['selectedItems'] as List<DeliverySelectionItem>;
+        final List<DeliverySelectionItem> selectedItems = result['selectedItems'] as List<DeliverySelectionItem>;
         final currentUser = _authService.currentUser;
+
         final deliveryItems = selectedItems.map((sel) => DeliveryItem(productId: sel.productId, sku: sel.sku, productName: sel.productName, quantity: sel.quantityToDeliver)).toList();
+        
         final newDelivery = Delivery(
           orderId: _currentOrder.id!, clientName: _currentOrder.clientName, deliveryDate: Timestamp.now(),
           items: deliveryItems, driverName: driverName, vehiclePlate: vehiclePlate,
           createdByUserName: currentUser?.displayName ?? currentUser?.email ?? 'N/A',
         );
+
         List<StockItem> stockItemsToUpdate = [];
         List<StockItem> availableItems = List.from(itemsReadyForDelivery);
+
         for (var selItem in selectedItems) {
           var itemsToFind = selItem.quantityToDeliver;
           var foundItems = availableItems.where((stockItem) => stockItem.productId == selItem.productId).take(itemsToFind).toList();
@@ -542,6 +611,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             availableItems.remove(found);
           }
         }
+
         await _firestoreService.createDeliveryAndUpdateStock(newDelivery, stockItemsToUpdate);
         _showSnackBar('Entrega registrada com sucesso!');
       } catch(e) {
@@ -553,17 +623,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
-  // ##### FUNÇÃO DE VERIFICAÇÃO ATUALIZADA E INTELIGENTE #####
   void _forceRecheckStatus() async {
     if (_currentOrder.id == null) return;
     _showSnackBar('Verificando status...', isError: false);
 
     try {
-      // Se o pedido está em fabricação, checa se a produção terminou
       if (_currentOrder.status == OrderStatus.emFabricacao) {
         await _firestoreService.checkAndUpdateOrderStatusAfterProduction(_currentOrder.id!);
       } 
-      // Para outros status ativos, checa se pode ser finalizado/movido para aguardando pagamento
       else if (_currentOrder.status == OrderStatus.aguardandoEntrega || _currentOrder.status == OrderStatus.aguardandoPagamentoFinal) {
         await _firestoreService.checkIfOrderIsFullyCompleted(_currentOrder.id!);
       }
@@ -583,8 +650,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         _currentOrder.status == OrderStatus.aguardandoEntrega;
     
     final bool canAttachProof = _currentOrder.status != OrderStatus.cotacao && 
-                               _currentOrder.status != OrderStatus.finalizado && 
-                               _currentOrder.status != OrderStatus.cancelado;
+                                _currentOrder.status != OrderStatus.finalizado && 
+                                _currentOrder.status != OrderStatus.cancelado;
 
     final bool needsRefund = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true;
     String? refundAmountString;
@@ -654,7 +721,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             ),
           ),
         const SizedBox(height: 24), 
-        _buildItemsSection(), 
+        _isLoadingStockItems
+          ? const Center(child: CircularProgressIndicator())
+          : _buildItemsSection(_stockItemsForOrder ?? []),
         const Divider(), 
         _buildTotalsSection(), 
         const SizedBox(height: 24), 
@@ -709,9 +778,38 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       ])
     ]);
   }
-  Widget _buildItemsSection() {
+  
+  Widget _buildItemsSection(List<StockItem> stockItems) {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Itens do Pedido:', style: Theme.of(context).textTheme.titleMedium), const Divider(), ..._currentOrder.items.map((item) => ListTile(contentPadding: EdgeInsets.zero, title: Text(item.productName), subtitle: Text('SKU: ${item.sku}\n${item.quantity} x ${currencyFormatter.format(item.finalUnitPrice)}'), trailing: Text(currencyFormatter.format(item.totalPrice), style: const TextStyle(fontWeight: FontWeight.bold)), isThreeLine: true))]);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Itens do Pedido:', style: Theme.of(context).textTheme.titleMedium),
+        const Divider(),
+        ..._currentOrder.items.map((item) {
+          final deliveredCount = stockItems.where((stockItem) =>
+            stockItem.productId == item.productId &&
+            stockItem.logoType == item.logoType &&
+            (stockItem.status == StockItemStatus.entregue || stockItem.status == StockItemStatus.emTransito)
+          ).length;
+
+          final subtitleText = 'SKU: ${item.sku}\n'
+                               '${item.quantity} x ${currencyFormatter.format(item.finalUnitPrice)}\n'
+                               'Entregues/Retirados: $deliveredCount de ${item.quantity}';
+
+          return ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: Text(item.productName),
+            subtitle: Text(subtitleText),
+            trailing: Text(
+              currencyFormatter.format(item.totalPrice),
+              style: const TextStyle(fontWeight: FontWeight.bold)
+            ),
+            isThreeLine: true,
+          );
+        })
+      ]
+    );
   }
   
   Widget _buildTotalsSection() {
@@ -785,8 +883,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   
   Widget _buildActionButtons() {
     final bool needsRefundConfirmation = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true &&
-                                         _currentOrder.status != OrderStatus.finalizado &&
-                                         _currentOrder.status != OrderStatus.cancelado;
+                                          _currentOrder.status != OrderStatus.finalizado &&
+                                          _currentOrder.status != OrderStatus.cancelado;
 
     if (needsRefundConfirmation) {
       return SizedBox(
@@ -821,7 +919,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
     
     if (_currentOrder.status == OrderStatus.aguardandoPagamentoFinal) {
-       return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento Final'), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmFinalPayment));
+        return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento Final'), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmFinalPayment));
     }
 
     return const SizedBox.shrink();

@@ -20,6 +20,9 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
   late TabController _tabController;
 
   final List<OrderStatus> _selectedStatusFilters = [];
+  
+  // ##### ALTERAÇÃO: Estado para controlar o loading da sincronização #####
+  bool _isSyncing = false;
 
   @override
   void initState() {
@@ -28,7 +31,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     _searchController.addListener(() {
       if (mounted) setState(() => _searchTerm = _searchController.text);
     });
-    // Adiciona um listener para reconstruir a tela ao trocar de aba (para esconder/mostrar os filtros)
     _tabController.addListener(() {
       if (mounted) {
         setState(() {
@@ -46,6 +48,39 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     _tabController.dispose();
     super.dispose();
   }
+  
+  // ##### ALTERAÇÃO INICIA AQUI: Função para chamar a migração #####
+  Future<void> _runLogoMigration() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Sincronizar Dados Antigos?'),
+        content: const Text(
+            'Isso irá corrigir os itens de estoque antigos de "Logo em Branco" para "Logo Nenhum".\n\nEsta operação deve ser executada apenas uma vez. Deseja continuar?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sim, Sincronizar')),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _isSyncing = true);
+    try {
+      final count = await firestoreService.synchronizeLogoType();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('$count itens foram sincronizados com sucesso!'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro na sincronização: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _isSyncing = false);
+    }
+  }
+  // ##### ALTERAÇÃO TERMINA AQUI #####
 
   Widget _buildStatusFilters() {
     const availableFilters = [
@@ -62,7 +97,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
-            // Botão para limpar filtros, aparece se algum estiver selecionado
             if (_selectedStatusFilters.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(right: 8.0),
@@ -109,11 +143,18 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
           ],
         ),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.cleaning_services),
-            tooltip: 'Atualizar Status de Pedidos Antigos',
-            onPressed: () { /* Sua função de migração, se ainda precisar dela */ },
-          ),
+          // ##### ALTERAÇÃO: Adiciona o botão de sincronização #####
+          if (_isSyncing)
+            const Padding(
+              padding: EdgeInsets.all(16.0),
+              child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3,)),
+            )
+          else
+            IconButton(
+              icon: const Icon(Icons.sync_problem),
+              tooltip: 'Sincronizar Tipos de Logo Antigos',
+              onPressed: _runLogoMigration,
+            ),
         ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(60.0),
@@ -143,7 +184,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
       ),
       body: Column(
         children: [
-          // ##### ALTERAÇÃO AQUI: Filtros só aparecem na primeira aba #####
           if (_tabController.index == 0) _buildStatusFilters(),
           Expanded(
             child: StreamBuilder<List<Order>>(

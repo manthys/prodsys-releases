@@ -3,7 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import '../models/order_item_model.dart';
+import 'package:collection/collection.dart'; // Import necessário para groupBy
 import '../models/order_model.dart';
 import '../models/product_model.dart';
 import '../models/stock_item_model.dart';
@@ -24,6 +24,9 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
   List<StockItemStatus> _selectedStatusFilters = [];
   final BehaviorSubject<void> _reloadSubject = BehaviorSubject<void>();
 
+  final TextEditingController _searchController = TextEditingController();
+  String _searchTerm = '';
+
   @override
   void initState() {
     super.initState();
@@ -31,12 +34,16 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     _tabController.addListener(() {
       if (_tabController.indexIsChanging) _clearFilters();
     });
+    _searchController.addListener(() {
+      if (mounted) setState(() => _searchTerm = _searchController.text);
+    });
   }
 
   @override
   void dispose() {
     _tabController.dispose();
     _reloadSubject.close();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -48,7 +55,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
 
     if (result != null) {
       final StockItem item = stockGroup['item'];
-      final int initialQuantity = stockGroup['count'];
+      final int initialQuantity = (stockGroup['items'] as List<StockItem>).length;
       final int newQuantity = result['newQuantity'];
       final String reason = result['reason'];
 
@@ -84,6 +91,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     setState(() {
       _selectedProductFilter = null;
       _selectedStatusFilters = [];
+      _searchController.clear();
     });
   }
 
@@ -276,7 +284,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
               );
             },
           ),
-          if (_selectedProductFilter != null || _selectedStatusFilters.isNotEmpty)
+          if (_selectedProductFilter != null || _selectedStatusFilters.isNotEmpty || _searchTerm.isNotEmpty)
             IconButton(icon: const Icon(Icons.filter_alt_off_outlined), tooltip: 'Limpar Filtros', onPressed: _clearFilters),
           StreamBuilder<List<Product>>(
             stream: _firestoreService.getProductsStream(),
@@ -286,6 +294,31 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
             },
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(60.0),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Buscar por produto ou SKU...',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                contentPadding: EdgeInsets.zero,
+                suffixIcon: _searchTerm.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () => _searchController.clear(),
+                      )
+                    : null,
+              ),
+            ),
+          ),
+        ),
       ),
       body: StreamBuilder(
         stream: Rx.combineLatest3(
@@ -307,7 +340,16 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
               .map((order) => order.id)
               .toSet();
 
-          List<StockItem> filteredItems = allStockItems;
+          List<StockItem> searchedItems = allStockItems;
+          if (_searchTerm.isNotEmpty) {
+            final query = _searchTerm.toLowerCase();
+            searchedItems = allStockItems.where((item) {
+              return item.productName.toLowerCase().contains(query) ||
+                     item.sku.toLowerCase().contains(query);
+            }).toList();
+          }
+
+          List<StockItem> filteredItems = searchedItems;
           if (_selectedProductFilter != null) {
             filteredItems = filteredItems.where((item) => item.productId == _selectedProductFilter!.id).toList();
           }
@@ -321,8 +363,8 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
           return TabBarView(
             controller: _tabController,
             children: [
-              _buildStockList(manualStock),
-              _buildStockList(allocatedStock),
+              _buildGeneralStockList(manualStock), // Alterado para a nova função
+              _buildAllocatedStockList(allocatedStock), // Alterado para a nova função
             ],
           );
         },
@@ -330,10 +372,12 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     );
   }
 
-  Widget _buildStockList(List<StockItem> items) {
+  // ##### ALTERAÇÃO: Função renomeada e com ordenação alfabética #####
+  Widget _buildGeneralStockList(List<StockItem> items) {
     if (items.isEmpty) {
-      return const Center(child: Text('Nenhum item encontrado.'));
+      return const Center(child: Text('Nenhum item encontrado com os filtros aplicados.'));
     }
+    
     final groupedItems = <String, Map<String, dynamic>>{};
     for (var item in items) {
       final key = '${item.productId}_${item.status.name}_${item.logoType}_${item.orderId}';
@@ -346,6 +390,10 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
       );
     }
     final groupedList = groupedItems.values.toList();
+    
+    // Ordena a lista alfabeticamente pelo nome do produto
+    groupedList.sort((a, b) => (a['item'] as StockItem).productName.compareTo((b['item'] as StockItem).productName));
+
     return ListView.builder(
       padding: const EdgeInsets.all(8),
       itemCount: groupedList.length,
@@ -356,66 +404,120 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     );
   }
 
+  // ##### ALTERAÇÃO: Nova função para construir a lista de estoque alocado, agrupada por pedido #####
+  Widget _buildAllocatedStockList(List<StockItem> items) {
+    if (items.isEmpty) {
+      return const Center(child: Text('Nenhum item alocado encontrado com os filtros aplicados.'));
+    }
+
+    // Agrupa os itens por ID do pedido
+    final groupedByOrder = groupBy(items, (StockItem item) => item.orderId!);
+    
+    // Ordena os pedidos (pelo nome do cliente para consistência)
+    final sortedOrderIds = groupedByOrder.keys.toList()
+      ..sort((a, b) {
+        final clientA = groupedByOrder[a]!.first.clientName ?? '';
+        final clientB = groupedByOrder[b]!.first.clientName ?? '';
+        return clientA.compareTo(clientB);
+      });
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(8.0),
+      itemCount: sortedOrderIds.length,
+      itemBuilder: (context, index) {
+        final orderId = sortedOrderIds[index];
+        final orderItems = groupedByOrder[orderId]!;
+        final firstItem = orderItems.first;
+        final orderIdShort = orderId.length >= 6 ? orderId.substring(0, 6).toUpperCase() : orderId.toUpperCase();
+        
+        // Agrupa os itens dentro do pedido por produto
+        final itemsGroupedByProduct = groupBy(orderItems, (StockItem item) => '${item.productId}_${item.status.name}_${item.logoType}');
+        
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          child: ExpansionTile(
+            key: PageStorageKey(orderId), // Chave para manter o estado (aberto/fechado)
+            title: Text(
+              'Pedido #$orderIdShort - ${firstItem.clientName}',
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            subtitle: Text('${orderItems.length} itens alocados'),
+            children: itemsGroupedByProduct.values.map((productGroup) {
+              return _buildStockCard(context, {
+                'item': productGroup.first,
+                'items': productGroup,
+              });
+            }).toList(),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildStockCard(BuildContext context, Map<String, dynamic> group) {
     final StockItem item = group['item'];
     final int count = (group['items'] as List<StockItem>).length;
     final bool canBeReallocated = item.status == StockItemStatus.emEstoque;
 
-    // ##### ALTERAÇÃO AQUI: Lógica para construir o texto do pedido #####
-    final orderText = item.orderId != null
-      ? 'Pedido: #${item.orderId?.substring(0, 6).toUpperCase()} - ${item.clientName}'
-      : 'Estoque Geral';
+    String orderText;
+    if (item.orderId != null && item.orderId!.isNotEmpty) {
+      String orderIdShort = item.orderId!.length >= 6
+          ? item.orderId!.substring(0, 6).toUpperCase()
+          : item.orderId!.toUpperCase();
+      orderText = 'Pedido: #$orderIdShort - ${item.clientName}';
+    } else {
+      orderText = 'Estoque Geral';
+    }
     
-    return Card(
-      child: ListTile(
-        leading: CircleAvatar(
-          backgroundColor: _getStatusColor(item.status),
-          foregroundColor: Colors.white,
-          child: Tooltip(message: _getStatusName(item.status), child: Icon(_getStatusIcon(item.status))),
-        ),
-        title: Text('${item.sku} - ${item.productName}', style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text('Status: ${_getStatusName(item.status)} | Logo: ${item.logoType}\n$orderText'),
-        isThreeLine: true,
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (canBeReallocated)
-              PopupMenuButton<String>(
-                onSelected: (value) {
-                  if (value == 'allocate') {
-                    _showManualAllocationDialog(item, count);
-                  } else if (value == 'deallocate') {
-                    _showDeallocateDialog(item, count);
-                  }
-                },
-                itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                  const PopupMenuItem<String>(
-                    value: 'allocate',
-                    child: ListTile(leading: Icon(Icons.redo, color: Colors.blue), title: Text('Alocar para Pedido')),
-                  ),
-                  if (item.orderId != null)
-                    const PopupMenuItem<String>(
-                      value: 'deallocate',
-                      child: ListTile(leading: Icon(Icons.undo, color: Colors.orange), title: Text('Devolver ao Geral')),
-                    ),
-                ],
-                icon: const Icon(Icons.more_vert),
-              ),
-            Text('${count.toString()} un.', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
-            const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.build_circle_outlined, color: Colors.grey),
-              tooltip: 'Ajustar Quantidade',
-              onPressed: () {
-                final adjustmentGroup = {
-                  'item': item,
-                  'count': count,
-                };
-                _showAdjustmentDialog(adjustmentGroup);
+    return ListTile(
+      leading: CircleAvatar(
+        backgroundColor: _getStatusColor(item.status),
+        foregroundColor: Colors.white,
+        child: Tooltip(message: _getStatusName(item.status), child: Icon(_getStatusIcon(item.status))),
+      ),
+      title: Text('${item.sku} - ${item.productName}', style: const TextStyle(fontWeight: FontWeight.bold)),
+      subtitle: Text('Status: ${_getStatusName(item.status)} | Logo: ${item.logoType}\n$orderText'),
+      isThreeLine: true,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (canBeReallocated)
+            PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'allocate') {
+                  _showManualAllocationDialog(item, count);
+                } else if (value == 'deallocate') {
+                  _showDeallocateDialog(item, count);
+                }
               },
-            )
-          ],
-        ),
+              itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+                const PopupMenuItem<String>(
+                  value: 'allocate',
+                  child: ListTile(leading: Icon(Icons.redo, color: Colors.blue), title: Text('Alocar para Pedido')),
+                ),
+                if (item.orderId != null)
+                  const PopupMenuItem<String>(
+                    value: 'deallocate',
+                    child: ListTile(leading: Icon(Icons.undo, color: Colors.orange), title: Text('Devolver ao Geral')),
+                  ),
+              ],
+              icon: const Icon(Icons.more_vert),
+            ),
+          Text('${count.toString()} un.', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+          const SizedBox(width: 8),
+          IconButton(
+            icon: const Icon(Icons.build_circle_outlined, color: Colors.grey),
+            tooltip: 'Ajustar Quantidade',
+            onPressed: () {
+              final adjustmentGroup = {
+                'item': item,
+                'count': count,
+                'items': group['items'],
+              };
+              _showAdjustmentDialog(adjustmentGroup);
+            },
+          )
+        ],
       ),
     );
   }

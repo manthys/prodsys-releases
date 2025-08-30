@@ -24,21 +24,57 @@ class GroupedStockResult {
   GroupedStockResult({required this.stockByOrderId});
 }
 
-DateTime _calculateDeadline(DateTime startDate, int businessDays) {
-  DateTime deadline = startDate;
-  int daysAdded = 0;
-  while (daysAdded < businessDays) {
-    deadline = deadline.add(const Duration(days: 1));
-    if (deadline.weekday != DateTime.saturday && deadline.weekday != DateTime.sunday) {
-      daysAdded++;
-    }
-  }
-  return deadline;
-}
-
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
+  Stream<List<Order>> getOperationalOrdersStream() {
+    final activeStatuses = [
+      OrderStatus.cotacao.name,
+      OrderStatus.pedido.name,
+      OrderStatus.emFabricacao.name,
+      OrderStatus.aguardandoEntrega.name,
+      OrderStatus.aguardandoPagamentoFinal.name,
+    ];
+    return _db
+        .collection('orders')
+        .where('status', whereIn: activeStatuses)
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList());
+  }
+
+  Stream<Map<String, dynamic>> getDashboardStream(DateTime start, DateTime end) {
+    final validStatuses = [
+      OrderStatus.cotacao.name,
+      OrderStatus.pedido.name,
+      OrderStatus.emFabricacao.name,
+      OrderStatus.finalizado.name,
+      OrderStatus.aguardandoEntrega.name,
+      OrderStatus.aguardandoPagamentoFinal.name
+    ];
+    
+    Stream<List<Order>> ordersStream = _db
+        .collection('orders')
+        .where('status', whereIn: validStatuses)
+        .where('creationDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('creationDate', isLessThanOrEqualTo: Timestamp.fromDate(end))
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList());
+        
+    Stream<List<Expense>> expensesStream = _db
+        .collection('expenses')
+        .where('expenseDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+        .where('expenseDate', isLessThanOrEqualTo: Timestamp.fromDate(end))
+        .snapshots()
+        .map((snapshot) => snapshot.docs.map((doc) => Expense.fromFirestore(doc.data(), doc.id)).toList());
+        
+    return Rx.combineLatest2(
+      ordersStream, expensesStream,
+      (List<Order> orders, List<Expense> expenses) {
+        return {'orders': orders,'expenses': expenses,};
+      },
+    );
+  }
+  
   Future<void> reallocateStockItem({
     required StockItem stockItemToMove,
     required Order targetOrder,
@@ -320,25 +356,31 @@ class FirestoreService {
     await writeBatch.commit();
   }
 
-  // ##### FUNÇÃO ATUALIZADA COM O DELAY #####
   Future<void> checkAndUpdateOrderStatusAfterProduction(String orderId) async {
-    // Adiciona uma pequena espera para dar tempo ao Firestore de processar o batch anterior
     await Future.delayed(const Duration(seconds: 2));
 
     final order = await getOrderById(orderId);
-    if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado || order.status == OrderStatus.aguardandoEntrega || order.status == OrderStatus.aguardandoPagamentoFinal) return;
-    
-    final totalItemsInOrder = order.items.fold<int>(0, (sum, item) => sum + item.quantity);
-    
-    if (totalItemsInOrder == 0) {
-        await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
-        return;
+    if (order == null || order.status != OrderStatus.emFabricacao) {
+      return;
     }
-    
-    final producedItemsSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).where('status', whereIn: [StockItemStatus.emEstoque.name, StockItemStatus.emTransito.name, StockItemStatus.entregue.name]).get();
-    
-    if (producedItemsSnapshot.docs.length >= totalItemsInOrder) {
+
+    final allStockItemsForOrderSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).get();
+    final allStockItemsForOrder = allStockItemsForOrderSnapshot.docs.map((doc) => StockItem.fromFirestore(doc.data(), doc.id)).toList();
+
+    if (allStockItemsForOrder.isEmpty) {
+      if (order.items.isEmpty) {
+        await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
+      }
+      return;
+    }
+
+    final hasPendingItems = allStockItemsForOrder.any((item) => item.status == StockItemStatus.aguardandoProducao);
+
+    if (!hasPendingItems) {
       await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
+      debugPrint('Pedido #$orderId atualizado para Aguardando Entrega, pois todos os itens foram produzidos.');
+    } else {
+      debugPrint('Pedido #$orderId ainda tem itens em produção. Status mantido.');
     }
   }
 
@@ -425,18 +467,7 @@ class FirestoreService {
       },
     );
   }
-  Stream<Map<String, dynamic>> getDashboardStream(DateTime start, DateTime end) {
-    final validStatuses = [OrderStatus.pedido.name, OrderStatus.emFabricacao.name, OrderStatus.finalizado.name, OrderStatus.aguardandoEntrega.name, OrderStatus.aguardandoPagamentoFinal.name];
-    Stream<List<Order>> ordersStream = _db.collection('orders').where('status', whereIn: validStatuses).where('creationDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start)).where('creationDate', isLessThanOrEqualTo: Timestamp.fromDate(end)).snapshots().map((snapshot) => snapshot.docs.map((doc) => Order.fromFirestore(doc.data(), doc.id)).toList());
-    Stream<List<Expense>> expensesStream = _db.collection('expenses').where('expenseDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start)).where('expenseDate', isLessThanOrEqualTo: Timestamp.fromDate(end)).snapshots().map((snapshot) => snapshot.docs.map((doc) => Expense.fromFirestore(doc.data(), doc.id)).toList());
-    return Rx.combineLatest2(
-      ordersStream, expensesStream,
-      (List<Order> orders, List<Expense> expenses) {
-        return {'orders': orders,'expenses': expenses,};
-      },
-    );
-  }
-
+  
   Future<GroupedStockResult> findAvailableStockForOrder(Order order) async {
     final Map<String, List<StockItem>> stockByOrderId = {};
     final neededItems = { for (var item in order.items) '${item.productId}-${item.logoType}' };
@@ -614,6 +645,55 @@ class FirestoreService {
       updatedCount++;
     }
     debugPrint('Migração concluída. $updatedCount pedidos foram verificados e/ou atualizados.');
+    return updatedCount;
+  }
+
+  Future<List<StockItem>> getStockItemsForOrder(String orderId) async {
+    final snapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).get();
+    return snapshot.docs.map((doc) => StockItem.fromFirestore(doc.data(), doc.id)).toList();
+  }
+
+  Future<void> createPickupAndUpdateStock(Delivery delivery, List<StockItem> stockItemsToUpdate) async {
+    final batch = _db.batch();
+    
+    final deliveryData = delivery.toJson();
+    deliveryData['status'] = DeliveryStatus.entregue.name;
+    
+    final deliveryRef = _db.collection('deliveries').doc();
+    batch.set(deliveryRef, deliveryData);
+    
+    for (final stockItem in stockItemsToUpdate) {
+      final stockRef = _db.collection('stock_items').doc(stockItem.id);
+      batch.update(stockRef, {'status': StockItemStatus.entregue.name, 'deliveryId': deliveryRef.id});
+    }
+    
+    await batch.commit();
+    await checkIfOrderIsFullyCompleted(delivery.orderId);
+  }
+
+  Future<int> synchronizeLogoType() async {
+    debugPrint('Iniciando script de migração de LogoType...');
+    final batch = _db.batch();
+    int updatedCount = 0;
+
+    final querySnapshot = await _db
+        .collection('stock_items')
+        .where('logoType', isEqualTo: 'Em Branco')
+        .get();
+
+    if (querySnapshot.docs.isEmpty) {
+      debugPrint('Nenhum item com "Logo em Branco" encontrado. Nenhuma ação necessária.');
+      return 0;
+    }
+
+    for (final doc in querySnapshot.docs) {
+      batch.update(doc.reference, {'logoType': 'Nenhum'});
+      updatedCount++;
+    }
+
+    await batch.commit();
+    
+    debugPrint('$updatedCount itens de estoque foram atualizados de "Em Branco" para "Nenhum".');
     return updatedCount;
   }
 }
