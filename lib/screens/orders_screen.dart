@@ -21,7 +21,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
 
   final List<OrderStatus> _selectedStatusFilters = [];
   
-  // ##### ALTERAÇÃO: Estado para controlar o loading da sincronização #####
   bool _isSyncing = false;
 
   @override
@@ -49,7 +48,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     super.dispose();
   }
   
-  // ##### ALTERAÇÃO INICIA AQUI: Função para chamar a migração #####
   Future<void> _runLogoMigration() async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -69,10 +67,12 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     setState(() => _isSyncing = true);
     try {
       final count = await firestoreService.synchronizeLogoType();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$count itens foram sincronizados com sucesso!'), backgroundColor: Colors.green),
       );
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erro na sincronização: $e'), backgroundColor: Colors.red),
       );
@@ -80,7 +80,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
       if (mounted) setState(() => _isSyncing = false);
     }
   }
-  // ##### ALTERAÇÃO TERMINA AQUI #####
 
   Widget _buildStatusFilters() {
     const availableFilters = [
@@ -143,7 +142,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
           ],
         ),
         actions: [
-          // ##### ALTERAÇÃO: Adiciona o botão de sincronização #####
           if (_isSyncing)
             const Padding(
               padding: EdgeInsets.all(16.0),
@@ -261,6 +259,13 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
             order.status != OrderStatus.finalizado &&
             order.status != OrderStatus.cancelado;
 
+        // <<< LÓGICA MODIFICADA >>>
+        String paymentInfo = '';
+        if (isArchived && order.status == OrderStatus.finalizado && order.paymentDistributions.isNotEmpty) {
+          final recipients = order.paymentDistributions.map((d) => d.recipient).toSet().join(', ');
+          paymentInfo = '\nRecebido por: $recipients';
+        }
+
         return Card(
           elevation: 2.0,
           margin: const EdgeInsets.symmetric(vertical: 8.0),
@@ -274,15 +279,16 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
               ),
             ),
             title: Text(
-                '${order.clientName} - Pedido #$orderIdShort',
-                style: const TextStyle(fontWeight: FontWeight.bold)
+              '${order.clientName} - Pedido #$orderIdShort',
+              style: const TextStyle(fontWeight: FontWeight.bold)
             ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                    'Data: ${DateFormat('dd/MM/yyyy').format(order.creationDate.toDate())}\n'
-                    'Status: ${_getStatusName(order.status)}'),
+                  'Data: ${DateFormat('dd/MM/yyyy').format(order.creationDate.toDate())}\n'
+                  'Status: ${_getStatusName(order.status)}$paymentInfo', // << AQUI
+                ),
                 if (needsRefund)
                   Padding(
                     padding: const EdgeInsets.only(top: 4.0),

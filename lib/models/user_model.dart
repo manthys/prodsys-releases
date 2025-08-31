@@ -4,13 +4,13 @@ class UserModel {
   final String uid;
   final String email;
   final String role;
-  final String displayName; // <-- NOVO CAMPO
+  final String displayName;
 
   UserModel({
     required this.uid,
     required this.email,
     required this.role,
-    required this.displayName, // <-- NOVO CAMPO
+    required this.displayName,
   });
 
   factory UserModel.fromFirestore(Map<String, dynamic> data, String documentId) {
@@ -18,7 +18,7 @@ class UserModel {
       uid: documentId,
       email: data['email'] ?? '',
       role: data['role'] ?? 'employee',
-      displayName: data['displayName'] ?? 'Nome não cadastrado', // <-- NOVO CAMPO
+      displayName: data['displayName'] ?? 'Nome não cadastrado',
     );
   }
 
@@ -26,7 +26,7 @@ class UserModel {
     return {
       'email': email,
       'role': role,
-      'displayName': displayName, // <-- NOVO CAMPO
+      'displayName': displayName,
     };
   }
 }

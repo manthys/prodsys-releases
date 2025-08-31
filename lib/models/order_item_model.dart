@@ -1,4 +1,5 @@
 // lib/models/order_item_model.dart
+
 class OrderItem {
   final String productId;
   final String sku;
@@ -23,9 +24,6 @@ class OrderItem {
   int get remainingQuantity => quantity - quantityProduced;
   double get totalPrice => quantity * finalUnitPrice;
 
-  // =================================================================
-  // FUNÇÃO 'copyWith' ADICIONADA AQUI
-  // =================================================================
   OrderItem copyWith({
     String? productId,
     String? sku,
@@ -61,6 +59,7 @@ class OrderItem {
     };
   }
 
+  // Construtor factory que estava faltando ou inacessível
   factory OrderItem.fromJson(Map<String, dynamic> json) {
     return OrderItem(
       productId: json['productId'] ?? '',

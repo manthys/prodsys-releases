@@ -14,6 +14,7 @@ import '../models/order_item_model.dart';
 import '../models/company_settings_model.dart';
 import '../models/expense_model.dart';
 import '../models/mold_model.dart';
+import '../models/payment_distribution_model.dart';
 import '../models/stock_item_model.dart';
 import '../models/delivery_model.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -75,6 +76,27 @@ class FirestoreService {
     );
   }
   
+  Future<void> confirmFinalPaymentAndUpdateStatus(String orderId, List<PaymentDistribution> distributions) async {
+    final order = await getOrderById(orderId);
+    if (order == null) return;
+    
+    await _db.collection('orders').doc(orderId).update({
+      'paymentDistributions': distributions.map((d) => d.toJson()).toList(),
+      'paymentStatus': PaymentStatus.pagoIntegralmente.name,
+    });
+    
+    await checkIfOrderIsFullyCompleted(orderId);
+  }
+  
+  Future<void> updateOrderPaymentDistribution(String orderId, List<PaymentDistribution> distributions) {
+    return _db.collection('orders').doc(orderId).update({
+      'paymentDistributions': distributions.map((d) => d.toJson()).toList(),
+    });
+  }
+
+  // ... (O restante do arquivo continua exatamente como você enviou, pois não precisa de mais alterações)
+  // Cole todo o resto do seu firestore_service.dart aqui
+  // ...
   Future<void> reallocateStockItem({
     required StockItem stockItemToMove,
     required Order targetOrder,
@@ -259,7 +281,7 @@ class FirestoreService {
         String newNotes = (updatedOrder.notes ?? '') + '\n[SISTEMA] Valor a devolver ao cliente: R\$${refundAmount.toStringAsFixed(2)}.';
         updatedOrder = updatedOrder.copyWith(notes: newNotes);
     }
-    batch.update(orderRef, {'items': updatedOrder.items.map((item) => item.toJson()).toList(),'totalItemsAmount': updatedOrder.totalItemsAmount,'shippingCost': updatedOrder.shippingCost,'discount': updatedOrder.discount,'finalAmount': updatedOrder.finalAmount,'notes': updatedOrder.notes,'paymentMethod': updatedOrder.paymentMethod,'deliveryAddress': updatedOrder.deliveryAddress.toJson(),'amountPaid': newAmountPaid,'paymentStatus': newPaymentStatus.name});
+    batch.update(orderRef, {'items': updatedOrder.items.map((item) => item.toJson()).toList(),'totalItemsAmount': updatedOrder.totalItemsAmount,'shippingCost': updatedOrder.shippingCost,'discount': updatedOrder.discount,'finalAmount': updatedOrder.finalAmount,'notes': updatedOrder.notes,'paymentMethod': updatedOrder.paymentMethod,'deliveryAddress': updatedOrder.deliveryAddress.toJson(),'paymentDistributions': updatedOrder.paymentDistributions.map((pd) => pd.toJson()).toList(), 'paymentStatus': newPaymentStatus.name});
     await batch.commit();
     await checkAndUpdateOrderStatusAfterProduction(originalOrder.id!);
   }
@@ -406,12 +428,6 @@ class FirestoreService {
       batch.update(doc.reference, {'status': StockItemStatus.entregue.name});
     }
     await batch.commit();
-    await checkIfOrderIsFullyCompleted(orderId);
-  }
-  Future<void> confirmFinalPaymentAndUpdateStatus(String orderId) async {
-    final order = await getOrderById(orderId);
-    if (order == null) return;
-    await updateOrderPayment(orderId, {'amountPaid': order.finalAmount, 'paymentStatus': PaymentStatus.pagoIntegralmente.name});
     await checkIfOrderIsFullyCompleted(orderId);
   }
   

@@ -2,7 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:rxdart/rxdart.dart'; // Import necessário para combinar streams
+import 'package:rxdart/rxdart.dart';
 import '../models/order_model.dart';
 import '../models/expense_model.dart';
 import '../services/firestore_service.dart';
@@ -29,8 +29,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       locale: const Locale('pt', 'BR'),
     );
 
-    // ##### CORREÇÃO AQUI #####
-    // Se a tela não estiver mais visível quando o usuário terminar de escolher a data, não fazemos nada.
     if (!mounted) return;
 
     if (picked != null) {
@@ -78,9 +76,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final pendingPaymentCount = operationalOrders.where((o) => o.status == OrderStatus.pedido).length;
           final inProductionCount = operationalOrders.where((o) => o.status == OrderStatus.emFabricacao).length;
           final readyForDeliveryCount = operationalOrders.where((o) => o.status == OrderStatus.aguardandoEntrega).length;
-
+          
           final finalizedOrders = ordersForFinance.where((order) => order.status == OrderStatus.finalizado).toList();
           final double totalRevenue = finalizedOrders.fold(0.0, (sum, order) => sum + order.finalAmount);
+          
+          final Map<String, double> finalizedRevenueByRecipient = {};
+          for (final order in finalizedOrders) {
+            for (final payment in order.paymentDistributions) {
+              finalizedRevenueByRecipient.update(
+                payment.recipient,
+                (value) => value + payment.amount,
+                ifAbsent: () => payment.amount,
+              );
+            }
+          }
+
+          // =================================================================
+          // LÓGICA DE "VALORES RECEBIDOS" CORRIGIDA AQUI
+          // =================================================================
+          final Map<String, double> cashInflowByRecipient = {};
+          // Agora também exclui o status "Pedido"
+          final validOrdersForCashflow = ordersForFinance.where((o) => 
+              o.status != OrderStatus.cancelado && 
+              o.status != OrderStatus.cotacao &&
+              o.status != OrderStatus.pedido // <<< CORREÇÃO APLICADA
+          ).toList();
+
+          for (final order in validOrdersForCashflow) {
+            for (final payment in order.paymentDistributions) {
+              cashInflowByRecipient.update(
+                payment.recipient,
+                (value) => value + payment.amount,
+                ifAbsent: () => payment.amount,
+              );
+            }
+          }
+          final double totalCashInflow = cashInflowByRecipient.values.fold(0.0, (sum, amount) => sum + amount);
+
           final double totalExpenses = expenses.fold(0.0, (sum, expense) => sum + expense.amount);
           final int validOrderCount = ordersForFinance.where((o) => o.status != OrderStatus.cotacao && o.status != OrderStatus.cancelado).length;
           final double balance = totalRevenue - totalExpenses;
@@ -105,10 +137,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Text('Resumo Financeiro (Período Selecionado)', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 8),
 
-              _buildSummaryCard(title: 'Faturamento (Pedidos Finalizados)', value: currencyFormatter.format(totalRevenue), icon: Icons.trending_up, color: Colors.green),
-              _buildSummaryCard(title: 'Total de Gastos', value: currencyFormatter.format(totalExpenses), icon: Icons.trending_down, color: Colors.red),
-              _buildSummaryCard(title: 'Balanço (Lucro Bruto)', value: currencyFormatter.format(balance), icon: Icons.account_balance_wallet, color: balance >= 0 ? Colors.blue : Colors.deepOrange),
-              _buildSummaryCard(title: 'Pedidos Válidos no Período', value: validOrderCount.toString(), icon: Icons.receipt_long, color: Colors.grey.shade700),
+              _buildSummaryCard(title: 'Faturamento (Pedidos Finalizados)', value: currencyFormatter.format(totalRevenue), icon: Icons.check_circle, color: Colors.green),
+              _buildSummaryCard(title: 'Valores Recebidos (Entradas)', value: currencyFormatter.format(totalCashInflow), icon: Icons.attach_money, color: Colors.blueAccent),
+              _buildSummaryCard(title: 'Total de Gastos (Saídas)', value: currencyFormatter.format(totalExpenses), icon: Icons.trending_down, color: Colors.red),
+              _buildSummaryCard(title: 'Balanço (Faturamento - Gastos)', value: currencyFormatter.format(balance), icon: Icons.account_balance_wallet, color: balance >= 0 ? Colors.teal : Colors.deepOrange),
+              const Divider(height: 32),
+
+              if (cashInflowByRecipient.isNotEmpty)
+                _buildDistributionCard(
+                  title: 'Valores Recebidos por Conta',
+                  distributionMap: cashInflowByRecipient,
+                  currencyFormatter: currencyFormatter,
+                  icon: Icons.login,
+                  color: Colors.blueAccent,
+                ),
+
+              if (finalizedRevenueByRecipient.isNotEmpty)
+                _buildDistributionCard(
+                  title: 'Faturamento por Conta (Finalizados)',
+                  distributionMap: finalizedRevenueByRecipient,
+                  currencyFormatter: currencyFormatter,
+                  icon: Icons.assessment,
+                  color: Colors.green,
+                ),
+
+              const SizedBox(height: 20),
             ],
           );
         },
@@ -120,7 +173,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final cardWidth = constraints.maxWidth > 500 ? (constraints.maxWidth / 4) - 8 : (constraints.maxWidth / 2) - 8;
-
         return SizedBox(
           width: cardWidth,
           child: Card(
@@ -169,6 +221,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDistributionCard({
+    required String title,
+    required Map<String, double> distributionMap,
+    required NumberFormat currencyFormatter,
+    required IconData icon,
+    required Color color,
+  }) {
+    final sortedEntries = distributionMap.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    return Card(
+      elevation: 2,
+      margin: const EdgeInsets.only(top: 16),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, color: color, size: 24),
+                const SizedBox(width: 8),
+                Text(title, style: Theme.of(context).textTheme.titleMedium),
+              ],
+            ),
+            const Divider(),
+            ...sortedEntries.map((entry) {
+              return ListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                leading: Icon(Icons.person_outline, color: Colors.grey.shade600),
+                title: Text(entry.key),
+                trailing: Text(
+                  currencyFormatter.format(entry.value),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              );
+            }).toList(),
           ],
         ),
       ),

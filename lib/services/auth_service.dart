@@ -24,16 +24,13 @@ class AuthService {
     await _auth.signOut();
   }
 
-  // FUNÇÃO ATUALIZADA para aceitar o nome
   Future<String?> createEmployeeUser(String email, String password, String displayName) async {
     try {
       UserCredential userCredential = await _auth.createUserWithEmailAndPassword(email: email, password: password);
       
       if (userCredential.user != null) {
-        // Atualiza o perfil do usuário no Firebase Auth com o nome
         await userCredential.user!.updateDisplayName(displayName);
 
-        // Salva os dados no Firestore
         UserModel newUser = UserModel(
           uid: userCredential.user!.uid,
           email: email,
@@ -42,15 +39,15 @@ class AuthService {
         );
         await _db.collection('users').doc(newUser.uid).set(newUser.toJson());
         
-        // Recarrega o usuário para garantir que o nome seja atualizado na sessão atual
         await userCredential.user!.reload();
         
         return null;
       }
       return "Não foi possível obter os dados do usuário criado.";
     } on FirebaseAuthException catch (e) {
-      if (e.code == 'weak-password') return 'A senha fornecida é muito fraca.';
-      else if (e.code == 'email-already-in-use') return 'Este email já está em uso.';
+      if (e.code == 'weak-password') {
+        return 'A senha fornecida é muito fraca.';
+      } else if (e.code == 'email-already-in-use') return 'Este email já está em uso.';
       return 'Ocorreu um erro: ${e.message}';
     } catch (e) {
       return 'Ocorreu um erro inesperado.';
@@ -93,7 +90,6 @@ class AuthService {
   Future<String?> deleteUser(String uid) async {
     try {
       await _db.collection('users').doc(uid).delete();
-      // Lembrete: A exclusão do Auth() em si ainda é um passo manual no Console do Firebase.
       return null;
     } catch (e) {
       return "Ocorreu um erro ao excluir o usuário do banco de dados.";

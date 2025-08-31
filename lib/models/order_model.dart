@@ -4,13 +4,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'order_item_model.dart';
 import 'address_model.dart';
+import 'payment_distribution_model.dart';
 
 enum OrderStatus { 
   cotacao, 
   pedido, 
   emFabricacao, 
   aguardandoEntrega, 
-  aguardandoPagamentoFinal, // <<< ADICIONE ESTA LINHA
+  aguardandoPagamentoFinal,
   finalizado, 
   cancelado 
 }
@@ -31,7 +32,8 @@ class Order {
   final double shippingCost;
   final double discount;
   final double finalAmount;
-  final double amountPaid;
+  
+  final List<PaymentDistribution> paymentDistributions;
 
   final String? paymentTerms;
   final String paymentMethod;
@@ -56,7 +58,7 @@ class Order {
     this.shippingCost = 0.0,
     this.discount = 0.0,
     required this.finalAmount,
-    this.amountPaid = 0.0,
+    this.paymentDistributions = const [],
     this.paymentTerms,
     required this.paymentMethod,
     this.notes,
@@ -66,9 +68,11 @@ class Order {
     required this.deliveryAddress,
   });
 
+  double get amountPaid => paymentDistributions.fold(0.0, (sum, item) => sum + item.amount);
+
   Order copyWith({
     String? clientId, String? clientName, List<OrderItem>? items, OrderStatus? status, PaymentStatus? paymentStatus,
-    double? totalItemsAmount, double? shippingCost, double? discount, double? finalAmount, double? amountPaid,
+    double? totalItemsAmount, double? shippingCost, double? discount, double? finalAmount, List<PaymentDistribution>? paymentDistributions,
     String? paymentTerms, String? paymentMethod, String? notes, Address? deliveryAddress,
     Timestamp? deliveryDate, Timestamp? confirmationDate, List<String>? attachmentUrls,
   }) {
@@ -86,7 +90,7 @@ class Order {
       shippingCost: shippingCost ?? this.shippingCost,
       discount: discount ?? this.discount,
       finalAmount: finalAmount ?? this.finalAmount,
-      amountPaid: amountPaid ?? this.amountPaid,
+      paymentDistributions: paymentDistributions ?? this.paymentDistributions,
       paymentTerms: paymentTerms ?? this.paymentTerms,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       notes: notes ?? this.notes,
@@ -112,7 +116,7 @@ class Order {
       shippingCost: shippingCost,
       discount: 0,
       finalAmount: finalAmount,
-      amountPaid: 0,
+      paymentDistributions: [],
       paymentTerms: paymentTerms,
       paymentMethod: paymentMethod,
       notes: notes,
@@ -129,7 +133,8 @@ class Order {
       'status': status.name, 'paymentStatus': paymentStatus.name, 'creationDate': creationDate,
       'confirmationDate': confirmationDate, 'deliveryDate': deliveryDate, 'totalItemsAmount': totalItemsAmount,
       'shippingCost': shippingCost, 'discount': discount, 'finalAmount': finalAmount,
-      'amountPaid': amountPaid, 'paymentTerms': paymentTerms, 'paymentMethod': paymentMethod,
+      'paymentDistributions': paymentDistributions.map((pd) => pd.toJson()).toList(),
+      'paymentTerms': paymentTerms, 'paymentMethod': paymentMethod,
       'notes': notes, 'attachmentUrls': attachmentUrls, 'createdByUserId': createdByUserId,
       'createdByUserName': createdByUserName, 'deliveryAddress': deliveryAddress.toJson(),
     };
@@ -138,13 +143,38 @@ class Order {
   factory Order.fromFirestore(Map<String, dynamic> data, String documentId) {
     var itemsList = (data['items'] as List<dynamic>?)?.map((itemJson) => OrderItem.fromJson(itemJson as Map<String, dynamic>)).toList() ?? [];
     var attachmentsList = (data['attachmentUrls'] as List<dynamic>?)?.map((url) => url as String).toList() ?? [];
+    
+    // =================================================================
+    // LÓGICA DE COMPATIBILIDADE CORRIGIDA AQUI
+    // =================================================================
+    // Primeiro, lemos o status do pedido a partir dos dados do Firestore.
+    final status = OrderStatus.values.firstWhere((e) => e.name == data['status'], orElse: () => OrderStatus.cotacao);
+    
+    List<PaymentDistribution> distributionsList = [];
+
+    // 1. Tenta ler a nova estrutura de pagamentos.
+    if (data['paymentDistributions'] != null && (data['paymentDistributions'] as List).isNotEmpty) {
+      distributionsList = (data['paymentDistributions'] as List<dynamic>)
+          .map((distJson) => PaymentDistribution.fromJson(distJson as Map<String, dynamic>))
+          .toList();
+    } 
+    // 2. Se não encontrar, verifica a estrutura antiga, MAS SÓ SE O PEDIDO NÃO ESTIVER CANCELADO.
+    else if (status != OrderStatus.cancelado && data.containsKey('amountPaid') && (data['amountPaid'] as num? ?? 0) > 0) {
+      distributionsList.add(
+        PaymentDistribution(
+          recipient: 'Cristiano', // Destinatário padrão para pagamentos antigos
+          amount: (data['amountPaid'] as num).toDouble(),
+        ),
+      );
+    }
+    // =================================================================
 
     return Order(
       id: documentId,
       clientId: data['clientId'] ?? '',
       clientName: data['clientName'] ?? '',
       items: itemsList,
-      status: OrderStatus.values.firstWhere((e) => e.name == data['status'], orElse: () => OrderStatus.cotacao),
+      status: status, // Usa a variável de status que já lemos
       paymentStatus: PaymentStatus.values.firstWhere((e) => e.name == data['paymentStatus'], orElse: () => PaymentStatus.aguardandoSinal),
       creationDate: data['creationDate'] ?? Timestamp.now(),
       confirmationDate: data['confirmationDate'],
@@ -153,7 +183,7 @@ class Order {
       shippingCost: (data['shippingCost'] ?? 0.0).toDouble(),
       discount: (data['discount'] ?? 0.0).toDouble(),
       finalAmount: (data['finalAmount'] ?? 0.0).toDouble(),
-      amountPaid: (data['amountPaid'] ?? 0.0).toDouble(),
+      paymentDistributions: distributionsList,
       paymentTerms: data['paymentTerms'],
       paymentMethod: data['paymentMethod'] ?? 'PIX',
       notes: data['notes'],

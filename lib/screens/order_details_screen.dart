@@ -9,23 +9,34 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
-import '../widgets/currency_input_formatter.dart';
+
+// Imports dos modelos
+import '../models/payment_distribution_model.dart';
 import '../models/delivery_model.dart';
 import '../models/order_model.dart';
 import '../models/order_item_model.dart';
 import '../models/stock_item_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
+
+// Imports dos serviços
 import '../services/auth_service.dart';
 import '../services/firestore_service.dart';
 import '../services/pdf_service.dart';
 import '../services/receipt_pdf_service.dart';
 import '../services/delivery_pdf_service.dart';
 import '../services/production_simulator.dart';
+
+// Imports dos widgets
 import '../widgets/delivery_dialog.dart';
+import '../widgets/payment_confirmation_dialog.dart';
+import '../widgets/payment_distribution_dialog.dart';
 import '../widgets/pickup_dialog.dart' hide DeliverySelectionItem;
+
+// Imports das telas
 import 'order_form_screen.dart';
 import 'delivery_history_screen.dart';
+
 
 class OrderDetailsScreen extends StatefulWidget {
   final Order order;
@@ -50,6 +61,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   DateTime? _recalculatedDeliveryDate;
   bool _isRecalculatingDate = false;
 
+  String? _currentUserRole;
+
   @override
   void initState() {
     super.initState();
@@ -57,8 +70,17 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     _simulator = ProductionSimulator(_firestoreService);
     _recalculateDateIfNeeded();
     _loadAssociatedStockItems();
+    _loadCurrentUserRole();
   }
   
+  Future<void> _loadCurrentUserRole() async {
+    final user = _authService.currentUser;
+    if (user != null) {
+      final role = await _authService.getUserRole(user.uid);
+      if (mounted) setState(() => _currentUserRole = role);
+    }
+  }
+
   Future<void> _loadAssociatedStockItems() async {
     if (!mounted) return;
     setState(() => _isLoadingStockItems = true);
@@ -188,6 +210,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   void _cancelarPedido() async {
+    if (_currentUserRole != 'admin') {
+      _showSnackBar('Você não tem permissão para cancelar pedidos.', isError: true);
+      return;
+    }
+
     final bool? confirmar = await showDialog(context: context, builder: (context) => AlertDialog(title: const Text('Confirmar Cancelamento'), content: const Text('Tem certeza que deseja cancelar este pedido? Os itens de produção associados serão excluídos.'), actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Não')), ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), child: const Text('Sim, Cancelar'))]));
     if (confirmar == true) {
       try {
@@ -203,31 +230,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
   Future<void> _confirmInitialPayment() async {
     final dateToConfirm = _recalculatedDeliveryDate ?? _currentOrder.deliveryDate?.toDate() ?? DateTime.now();
-    
     if (!mounted) return;
 
-    final bool? continuePayment = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Confirmar Prazo de Entrega'),
-        content: Text('Com base na fila de produção atual, a previsão de entrega é ${DateFormat('dd/MM/yyyy').format(dateToConfirm)}. Deseja prosseguir para o pagamento?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
-          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sim, Prosseguir')),
-        ],
-      )
-    );
-    
-    if (continuePayment != true) return;
-    
     final groupedStock = await _firestoreService.findAvailableStockForOrder(_currentOrder);
     if (!mounted) return;
-    
+
     final allOrders = await _firestoreService.getOrdersStream().first;
     if (!mounted) return;
-    
-    List<StockItem> chosenItems = [];
 
+    List<StockItem> chosenItems = [];
     if (groupedStock.stockByOrderId.isNotEmpty) {
       final List<StockItem>? result = await showDialog<List<StockItem>>(
         context: context,
@@ -238,7 +249,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           neededItems: _currentOrder.items,
         ),
       );
-
       if (result == null) {
         _showSnackBar('Alocação cancelada pelo usuário.', isError: true);
         return;
@@ -246,146 +256,57 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       chosenItems = result;
     }
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _showPaymentDialog(chosenItems, dateToConfirm);
-      }
-    });
+    if(mounted) {
+      _showUnifiedPaymentDialog(chosenItems, dateToConfirm);
+    }
   }
-
-  Future<void> _showPaymentDialog(List<StockItem> chosenItems, DateTime newEstimatedDate) async {
-    PlatformFile? pickedFile;
-    int paymentOption = 0;
-    final customAmountController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
-    final Map<String, dynamic>? paymentResult = await showDialog<Map<String, dynamic>>(
+  
+  Future<void> _showUnifiedPaymentDialog(List<StockItem> chosenItems, DateTime newEstimatedDate) async {
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) {
-        return StatefulBuilder(builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text('Confirmar Pagamento e Iniciar Produção'),
-            content: Form(
-              key: formKey,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('Selecione o valor pago:'),
-                    RadioListTile<int>(title: const Text('Sinal (50%)'), value: 0, groupValue: paymentOption, onChanged: (value) => setDialogState(() => paymentOption = value!)),
-                    RadioListTile<int>(title: const Text('Valor Integral (100%)'), value: 1, groupValue: paymentOption, onChanged: (value) => setDialogState(() => paymentOption = value!)),
-                    RadioListTile<int>(title: const Text('Nenhum Pagamento Agora'), value: 2, groupValue: paymentOption, onChanged: (value) => setDialogState(() => paymentOption = value!)),
-                    RadioListTile<int>(title: const Text('Outro Valor'), value: 3, groupValue: paymentOption, onChanged: (value) => setDialogState(() => paymentOption = value!)),
-                    Visibility(
-                      visible: paymentOption == 3,
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: TextFormField(
-                          controller: customAmountController,
-                          keyboardType: TextInputType.number,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly,
-                            CurrencyInputFormatter(),
-                          ],
-                          decoration: const InputDecoration(labelText: 'Valor Específico', prefixText: 'R\$ '),
-                          validator: (value) {
-                            if (paymentOption == 3) {
-                              if (value == null || value.isEmpty) return 'Obrigatório';
-                              final cleanValue = value.replaceAll('.', '').replaceAll(',', '.');
-                              if (double.tryParse(cleanValue) == null || double.parse(cleanValue) <= 0) return 'Valor inválido';
-                            }
-                            return null;
-                          },
-                        ),
-                      ),
-                    ),
-                    const Divider(),
-                    const SizedBox(height: 16),
-                    const Text('Deseja anexar um comprovante? (Opcional)'),
-                    const SizedBox(height: 8),
-                    Center(child: ElevatedButton.icon(icon: const Icon(Icons.attach_file), label: const Text('Anexar'), onPressed: () async {
-                      final result = await FilePicker.platform.pickFiles();
-                      if (result != null) setDialogState(() => pickedFile = result.files.first);
-                    })),
-                    if (pickedFile != null) Padding(padding: const EdgeInsets.only(top: 8.0), child: Center(child: Text('Arquivo: ${pickedFile!.name}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold))))
-                  ]
-                )
-              ),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
-              ElevatedButton(onPressed: () {
-                if (formKey.currentState!.validate()) {
-                  Navigator.of(context).pop({
-                    'confirmed': true,
-                    'option': paymentOption,
-                    'customAmount': customAmountController.text,
-                    'proof': pickedFile,
-                  });
-                }
-              }, child: const Text('Confirmar'))
-            ]
-          );
-        });
-      },
+      builder: (context) => PaymentConfirmationDialog(totalAmount: _currentOrder.finalAmount),
     );
 
-    if (paymentResult == null || paymentResult['confirmed'] != true) return;
-    
-    setState(() => _isUploading = true);
-    
-    try {
-      double amountToConfirm = 0.0;
-      final selectedOption = paymentResult['option'];
-      
-      switch (selectedOption) {
-        case 0:
-          amountToConfirm = _currentOrder.finalAmount / 2;
-          break;
-        case 1:
-          amountToConfirm = _currentOrder.finalAmount;
-          break;
-        case 2:
-          amountToConfirm = 0.0;
-          break;
-        case 3:
-          final String rawValue = paymentResult['customAmount'].replaceAll('.', '').replaceAll(',', '.');
-          amountToConfirm = double.tryParse(rawValue) ?? 0.0;
-          break;
-      }
+    if (result == null) return;
 
+    final double amountToConfirm = result['amount'];
+    final List<PaymentDistribution> distributions = result['distributions'];
+    final PlatformFile? proof = result['proof'];
+
+    setState(() => _isUploading = true);
+
+    try {
       PaymentStatus newPaymentStatus;
-      if (amountToConfirm <= 0) {
-        newPaymentStatus = PaymentStatus.aguardandoSinal;
-      } else if (amountToConfirm >= _currentOrder.finalAmount) {
+      if ((_currentOrder.amountPaid + amountToConfirm) >= _currentOrder.finalAmount) {
         newPaymentStatus = PaymentStatus.pagoIntegralmente;
-      } else {
+      } else if (amountToConfirm > 0) {
         newPaymentStatus = PaymentStatus.sinalPago;
+      } else {
+        newPaymentStatus = _currentOrder.paymentStatus;
       }
+      
+      final updatedDistributions = [..._currentOrder.paymentDistributions, ...distributions];
 
       final Map<String, dynamic> dataToUpdate = {
-        'amountPaid': amountToConfirm, 
-        'paymentStatus': newPaymentStatus.name, 
-        'status': OrderStatus.emFabricacao.name, 
+        'paymentDistributions': updatedDistributions.map((d) => d.toJson()).toList(),
+        'paymentStatus': newPaymentStatus.name,
+        'status': OrderStatus.emFabricacao.name,
         'confirmationDate': Timestamp.now(),
-        'deliveryDate': Timestamp.fromDate(newEstimatedDate), 
+        'deliveryDate': Timestamp.fromDate(newEstimatedDate),
       };
-      await _firestoreService.updateOrderPayment(_currentOrder.id!, dataToUpdate);
       
-      await _uploadProof(paymentResult['proof']);
+      await _firestoreService.updateOrderPayment(_currentOrder.id!, dataToUpdate);
+      if (proof != null) {
+        await _uploadProof(proof);
+      }
       
       final updatedOrder = await _firestoreService.getOrderById(_currentOrder.id!);
       if (updatedOrder == null) throw Exception("Pedido não encontrado após atualização.");
 
-      await _firestoreService.processSmartAllocationForOrder(
-        updatedOrder, 
-        chosenItems,
-      );
+      await _firestoreService.processSmartAllocationForOrder(updatedOrder, chosenItems);
 
       _showSnackBar('Pagamento confirmado! Itens enviados para produção.');
       _reloadOrder();
-
     } catch (e) {
       _showSnackBar('Erro no processo: $e', isError: true);
     } finally {
@@ -436,24 +357,37 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   Future<void> _confirmFinalPayment() async {
-    PlatformFile? pickedFile;
-    final bool? confirmed = await showDialog<bool>(context: context, builder: (context) {
-      return StatefulBuilder(builder: (context, setDialogState) {
-        return AlertDialog(title: const Text("Confirmar Pagamento Final"), content: Column(mainAxisSize: MainAxisSize.min, children: [const Text('Deseja anexar um comprovante? (Opcional)'), const SizedBox(height: 20), ElevatedButton.icon(icon: const Icon(Icons.attach_file), label: const Text('Anexar Comprovante'), onPressed: () async {
-          final result = await FilePicker.platform.pickFiles();
-          if (result != null) setDialogState(() => pickedFile = result.files.first);
-        }), if (pickedFile != null) Padding(padding: const EdgeInsets.only(top: 8.0), child: Text('Arquivo: ${pickedFile!.name}', style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)))]), actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')), ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Confirmar'))]);
-      });
-    });
-    if (confirmed != true) return;
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => PaymentConfirmationDialog(
+        totalAmount: _currentOrder.finalAmount,
+        alreadyPaidAmount: _currentOrder.amountPaid,
+      ),
+    );
+
+    if (result == null) return;
+
+    final double amountToConfirm = result['amount'];
+    final List<PaymentDistribution> distributions = result['distributions'];
+    final PlatformFile? proof = result['proof'];
+
+    if (amountToConfirm <= 0) {
+        _showSnackBar("Nenhum valor foi adicionado.", isError: true);
+        return;
+    }
+
     setState(() => _isUploading = true);
     try {
-      await _uploadProof(pickedFile);
-      await _firestoreService.confirmFinalPaymentAndUpdateStatus(_currentOrder.id!);
+      if (proof != null) {
+        await _uploadProof(proof);
+      }
+
+      final updatedDistributions = [..._currentOrder.paymentDistributions, ...distributions];
+      await _firestoreService.confirmFinalPaymentAndUpdateStatus(_currentOrder.id!, updatedDistributions);
       _showSnackBar("Pagamento final confirmado!");
       _reloadOrder();
     } catch (e) {
-        _showSnackBar('Erro: $e', isError: true);
+      _showSnackBar('Erro: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }
@@ -486,10 +420,31 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
+  Future<void> _editPaymentDistribution() async {
+    final List<PaymentDistribution>? updatedDistributions = await showDialog<List<PaymentDistribution>>(
+      context: context,
+      builder: (context) => PaymentDistributionDialog(
+        totalAmount: _currentOrder.amountPaid,
+        initialDistributions: _currentOrder.paymentDistributions,
+      ),
+    );
+
+    if (updatedDistributions != null) {
+      try {
+        await _firestoreService.updateOrderPaymentDistribution(_currentOrder.id!, updatedDistributions);
+        _showSnackBar("Distribuição de pagamento atualizada!");
+        _reloadOrder();
+      } catch (e) {
+        _showSnackBar("Erro ao atualizar: $e", isError: true);
+      }
+    }
+  }
+
   void _navigateToEditScreen() async {
     final result = await Navigator.of(context).push<Order>(MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: _currentOrder)));
     if (result != null && mounted) setState(() => _currentOrder = result);
   }
+
   void _duplicateOrder() {
     final currentUser = _authService.currentUser;
     if (currentUser == null) {
@@ -500,9 +455,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     Navigator.of(context).push(MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: newQuote)));
   }
 
-  // ##### ALTERAÇÃO: Lógica de retirada mais segura #####
   void _registerPickup() async {
-    // Busca SOMENTE os itens deste pedido que estão em estoque
     final itemsReadyForPickup = (_stockItemsForOrder ?? [])
         .where((item) => item.status == StockItemStatus.emEstoque)
         .toList();
@@ -567,9 +520,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
-  // ##### ALTERAÇÃO: Lógica de entrega mais segura #####
   void _showDeliveryDialog() async {
-    // Busca SOMENTE os itens deste pedido que estão em estoque
     final itemsReadyForDelivery = (_stockItemsForOrder ?? [])
         .where((item) => item.status == StockItemStatus.emEstoque)
         .toList();
@@ -644,15 +595,24 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   
   @override
   Widget build(BuildContext context) {
+    // =================================================================
+    // LÓGICA DE VISIBILIDADE DO BOTÃO DE EDITAR CORRIGIDA AQUI
+    // =================================================================
     final bool canBeEdited = _currentOrder.status == OrderStatus.cotacao || 
-        _currentOrder.status == OrderStatus.pedido || 
-        _currentOrder.status == OrderStatus.emFabricacao ||
-        _currentOrder.status == OrderStatus.aguardandoEntrega;
+                             _currentOrder.status == OrderStatus.pedido ||
+                             _currentOrder.status == OrderStatus.emFabricacao ||
+                             _currentOrder.status == OrderStatus.aguardandoEntrega;
     
-    final bool canAttachProof = _currentOrder.status != OrderStatus.cotacao && 
-                                _currentOrder.status != OrderStatus.finalizado && 
-                                _currentOrder.status != OrderStatus.cancelado;
-
+    final bool canCancel = _currentUserRole == 'admin' && 
+                           _currentOrder.status != OrderStatus.finalizado && 
+                           _currentOrder.status != OrderStatus.cancelado;
+                           
+    final bool canEditPayment = _currentUserRole == 'admin' && 
+                                (_currentOrder.status == OrderStatus.emFabricacao ||
+                                 _currentOrder.status == OrderStatus.aguardandoEntrega ||
+                                 _currentOrder.status == OrderStatus.aguardandoPagamentoFinal ||
+                                 _currentOrder.status == OrderStatus.finalizado);
+    
     final bool needsRefund = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true;
     String? refundAmountString;
     if (needsRefund) {
@@ -667,14 +627,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       appBar: AppBar(
         title: Text('Detalhes #${_currentOrder.id?.substring(0, 6).toUpperCase() ?? ''}'),
         actions: [
-          if (_currentOrder.status != OrderStatus.finalizado && _currentOrder.status != OrderStatus.cancelado)
-            IconButton(icon: const Icon(Icons.sync), tooltip: 'Forçar Verificação de Status', onPressed: _forceRecheckStatus),
-          if (canAttachProof)
-            IconButton(icon: const Icon(Icons.attach_file), tooltip: 'Anexar Comprovante', onPressed: _attachProof),
-          if (_currentOrder.status == OrderStatus.finalizado)
-            IconButton(icon: const Icon(Icons.receipt_long), tooltip: 'Gerar Recibo', onPressed: _generateReceiptPdf),
-          IconButton(icon: const Icon(Icons.copy_all_outlined), tooltip: 'Duplicar como Cotação', onPressed: _duplicateOrder),
-          if (canBeEdited) IconButton(icon: const Icon(Icons.edit), tooltip: 'Editar Pedido', onPressed: _navigateToEditScreen),
+          if (canEditPayment)
+            IconButton(
+              icon: const Icon(Icons.edit_note),
+              tooltip: 'Adicionar/Editar Distribuição de Pagamento',
+              onPressed: _editPaymentDistribution,
+            ),
+          // BOTÃO DE EDITAR AGORA USA A LÓGICA CORRETA
+          if (canBeEdited) 
+            IconButton(icon: const Icon(Icons.edit), tooltip: 'Editar Itens do Pedido', onPressed: _navigateToEditScreen),
+
           IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Gerar PDF do Pedido', onPressed: _generateOrderPdf),
           if (_currentOrder.status != OrderStatus.cotacao && _currentOrder.status != OrderStatus.cancelado)
             IconButton(
@@ -690,7 +652,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               }
             ),
           if (_currentOrder.status == OrderStatus.cotacao) IconButton(icon: const Icon(Icons.delete), tooltip: 'Excluir Cotação', onPressed: _confirmarExclusao),
-          if (_currentOrder.status != OrderStatus.finalizado && _currentOrder.status != OrderStatus.cancelado) IconButton(icon: const Icon(Icons.cancel), tooltip: 'Cancelar Pedido', onPressed: _cancelarPedido),
+          if (canCancel) IconButton(icon: const Icon(Icons.cancel), tooltip: 'Cancelar Pedido', onPressed: _cancelarPedido),
           const SizedBox(width: 8),
         ],
       ),
@@ -726,6 +688,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           : _buildItemsSection(_stockItemsForOrder ?? []),
         const Divider(), 
         _buildTotalsSection(), 
+        _buildPaymentDistributionSection(), 
         const SizedBox(height: 24), 
         _buildNotesSection(), 
         _buildAttachmentsSection(), 
@@ -738,12 +701,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   
   Widget _buildClientInfoSection({required bool needsRefund}) {
     final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
-    
     final dateToShow = _recalculatedDeliveryDate ?? _currentOrder.deliveryDate?.toDate();
     final deliveryDateFormatted = dateToShow != null 
         ? DateFormat('dd/MM/yyyy').format(dateToShow)
         : 'A definir';
-
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Text('Cliente: ${_currentOrder.clientName}', style: Theme.of(context).textTheme.titleLarge), 
       const SizedBox(height: 8), 
@@ -861,10 +822,46 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
 
+  Widget _buildPaymentDistributionSection() {
+    if (_currentOrder.paymentDistributions.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8.0, right: 8.0),
+      child: Align(
+        alignment: Alignment.centerRight,
+        child: SizedBox(
+          width: 280,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text("Recebido por:", style: Theme.of(context).textTheme.bodySmall),
+              ..._currentOrder.paymentDistributions.map((dist) {
+                return Padding(
+                  padding: const EdgeInsets.only(left: 16.0, top: 2.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(dist.recipient, style: Theme.of(context).textTheme.bodySmall),
+                      Text(currencyFormatter.format(dist.amount), style: Theme.of(context).textTheme.bodySmall),
+                    ],
+                  ),
+                );
+              }).toList(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildNotesSection() {
     if (_currentOrder.notes == null || _currentOrder.notes!.isEmpty) return const SizedBox.shrink();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Observações:', style: Theme.of(context).textTheme.titleMedium), const SizedBox(height: 4), Container(width: double.infinity, padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.grey.shade100, border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(4)), child: Text(_currentOrder.notes!)), const SizedBox(height: 24)]);
   }
+
   Widget _buildAttachmentsSection() {
     if (_currentOrder.attachmentUrls.isEmpty) return const SizedBox.shrink();
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text('Anexos (Comprovantes):', style: Theme.of(context).textTheme.titleMedium), const SizedBox(height: 8), Card(elevation: 1, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: Colors.grey.shade300)), child: Column(children: _currentOrder.attachmentUrls.asMap().entries.map((entry) {
@@ -924,6 +921,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     return const SizedBox.shrink();
   }
+
   Color _getStatusColor(OrderStatus status) {
     switch (status) {
       case OrderStatus.cotacao: return Colors.blueGrey;
@@ -935,6 +933,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       case OrderStatus.cancelado: return Colors.red;
     }
   }
+
   String _getStatusName(OrderStatus status) {
     switch (status) {
       case OrderStatus.cotacao: return 'Cotação';

@@ -17,14 +17,35 @@ class _StockItemDialogState extends State<StockItemDialog> {
   final _firestoreService = FirestoreService();
   final _qtyController = TextEditingController(text: '1');
   
+  // ##### ALTERAÇÃO: Controller para o campo de texto do produto #####
+  final _productController = TextEditingController();
+  
   Product? _selectedProduct;
   String _logoType = 'Nenhum';
   bool _isLoading = false;
-  
-  // =================================================================
-  // VARIÁVEL DE ESTADO PARA O CHECKBOX
-  // =================================================================
   bool _fulfillPendingOrders = true;
+
+  @override
+  void dispose() {
+    _qtyController.dispose();
+    _productController.dispose();
+    super.dispose();
+  }
+
+  // ##### ALTERAÇÃO: Nova função para abrir o diálogo de busca de produto #####
+  Future<void> _showProductSearchDialog(List<Product> allProducts) async {
+    final Product? result = await showDialog<Product>(
+      context: context,
+      builder: (context) => _ProductSearchDialog(allProducts: allProducts),
+    );
+
+    if (result != null) {
+      setState(() {
+        _selectedProduct = result;
+        _productController.text = '${result.sku} - ${result.name}';
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -36,6 +57,7 @@ class _StockItemDialogState extends State<StockItemDialog> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // ##### ALTERAÇÃO: Substituído Dropdown por TextFormField com busca #####
               StreamBuilder<List<Product>>(
                 stream: _firestoreService.getProductsStream(),
                 builder: (context, snapshot) {
@@ -43,16 +65,16 @@ class _StockItemDialogState extends State<StockItemDialog> {
                     return const Center(child: CircularProgressIndicator());
                   }
                   final products = snapshot.data!;
-                  return DropdownButtonFormField<Product>(
-                    value: _selectedProduct,
-                    hint: const Text('Selecione um Produto'),
-                    isExpanded: true,
-                    items: products.map((product) => DropdownMenuItem<Product>(
-                      value: product,
-                      child: Text('${product.sku} - ${product.name}', overflow: TextOverflow.ellipsis),
-                    )).toList(),
-                    onChanged: (product) => setState(() => _selectedProduct = product),
-                    validator: (value) => value == null ? 'Selecione um produto' : null,
+                  return TextFormField(
+                    controller: _productController,
+                    readOnly: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Produto',
+                      hintText: 'Clique para selecionar um produto',
+                      suffixIcon: Icon(Icons.search),
+                    ),
+                    onTap: () => _showProductSearchDialog(products),
+                    validator: (value) => _selectedProduct == null ? 'Selecione um produto' : null,
                   );
                 },
               ),
@@ -85,9 +107,6 @@ class _StockItemDialogState extends State<StockItemDialog> {
                 onChanged: (value) => setState(() => _logoType = value!),
               ),
               
-              // =================================================================
-              // CHECKBOX ADICIONADO AQUI
-              // =================================================================
               const Divider(height: 20),
               CheckboxListTile(
                 title: const Text('Usar para atender pedidos pendentes'),
@@ -111,9 +130,6 @@ class _StockItemDialogState extends State<StockItemDialog> {
           onPressed: _isLoading ? null : () async {
             if (_formKey.currentState!.validate()) {
               setState(() => _isLoading = true);
-              // =================================================================
-              // PARÂMETRO ENVIADO NA CHAMADA DA FUNÇÃO
-              // =================================================================
               await _firestoreService.addManualStockItem(
                 _selectedProduct!,
                 int.parse(_qtyController.text),
@@ -127,6 +143,86 @@ class _StockItemDialogState extends State<StockItemDialog> {
             ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) 
             : const Text('Adicionar'),
         ),
+      ],
+    );
+  }
+}
+
+// ##### ALTERAÇÃO: Novo widget de diálogo para a busca de produtos #####
+class _ProductSearchDialog extends StatefulWidget {
+  final List<Product> allProducts;
+  const _ProductSearchDialog({required this.allProducts});
+
+  @override
+  State<_ProductSearchDialog> createState() => _ProductSearchDialogState();
+}
+
+class _ProductSearchDialogState extends State<_ProductSearchDialog> {
+  late List<Product> _filteredProducts;
+  final _searchController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _filteredProducts = List.from(widget.allProducts);
+    _searchController.addListener(_filterList);
+  }
+
+  @override
+  void dispose() {
+    _searchController.removeListener(_filterList);
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _filterList() {
+    final query = _searchController.text.toLowerCase();
+    setState(() {
+      _filteredProducts = widget.allProducts.where((product) {
+        return product.name.toLowerCase().contains(query) || 
+               product.sku.toLowerCase().contains(query);
+      }).toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Selecionar Produto'),
+      content: SizedBox(
+        width: 400,
+        height: 500,
+        child: Column(
+          children: [
+            TextField(
+              controller: _searchController,
+              decoration: const InputDecoration(
+                labelText: 'Buscar por nome ou SKU...',
+                prefixIcon: Icon(Icons.search),
+                border: OutlineInputBorder(),
+              ),
+              autofocus: true,
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: _filteredProducts.length,
+                itemBuilder: (context, index) {
+                  final product = _filteredProducts[index];
+                  return ListTile(
+                    title: Text(product.name),
+                    subtitle: Text('SKU: ${product.sku}'),
+                    onTap: () => Navigator.of(context).pop(product),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar'))
       ],
     );
   }

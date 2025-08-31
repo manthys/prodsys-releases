@@ -1,4 +1,5 @@
 // lib/models/address_model.dart
+
 class Address {
   final String street;
   final String neighborhood;
@@ -25,7 +26,7 @@ class Address {
   }
 
   factory Address.fromJson(Map<String, dynamic>? json) {
-    if (json == null) return Address();
+    if (json == null) return Address(); // Retorna um endereço vazio se o JSON for nulo
     return Address(
       street: json['street'] ?? '',
       neighborhood: json['neighborhood'] ?? '',
