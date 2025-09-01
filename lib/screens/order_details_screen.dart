@@ -18,6 +18,7 @@ import '../models/order_item_model.dart';
 import '../models/stock_item_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
+import '../models/delivery_selection_item_model.dart'; // <<< IMPORT ADICIONADO E CORRIGIDO
 
 // Imports dos serviços
 import '../services/auth_service.dart';
@@ -31,7 +32,7 @@ import '../services/production_simulator.dart';
 import '../widgets/delivery_dialog.dart';
 import '../widgets/payment_confirmation_dialog.dart';
 import '../widgets/payment_distribution_dialog.dart';
-import '../widgets/pickup_dialog.dart' hide DeliverySelectionItem;
+import '../widgets/pickup_dialog.dart';
 
 // Imports das telas
 import 'order_form_screen.dart';
@@ -54,13 +55,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   late Order _currentOrder;
   bool _isGeneratingPdf = false;
   bool _isUploading = false;
-  
   List<StockItem>? _stockItemsForOrder;
   bool _isLoadingStockItems = true;
-
   DateTime? _recalculatedDeliveryDate;
   bool _isRecalculatingDate = false;
-
   String? _currentUserRole;
 
   @override
@@ -473,7 +471,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (result != null) {
       setState(() => _isUploading = true);
       try {
-        final List<DeliverySelectionItem> selectedItems = result['selectedItems'] as List<DeliverySelectionItem>;
+        final List<DeliverySelectionItem> selectedItems = result['selectedItems'];
         final currentUser = _authService.currentUser;
         
         final deliveryItems = selectedItems
@@ -500,7 +498,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         for (var selItem in selectedItems) {
           var itemsToFind = selItem.quantityToDeliver;
           var foundItems = availableItems
-              .where((stockItem) => stockItem.productId == selItem.productId)
+              .where((stockItem) => stockItem.productId == selItem.productId && stockItem.logoType == selItem.logoType)
               .take(itemsToFind)
               .toList();
           stockItemsToUpdate.addAll(foundItems);
@@ -540,7 +538,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       try {
         final driverName = result['driverName'] as String;
         final vehiclePlate = result['vehiclePlate'] as String;
-        final List<DeliverySelectionItem> selectedItems = result['selectedItems'] as List<DeliverySelectionItem>;
+        final List<DeliverySelectionItem> selectedItems = result['selectedItems'];
         final currentUser = _authService.currentUser;
 
         final deliveryItems = selectedItems.map((sel) => DeliveryItem(productId: sel.productId, sku: sel.sku, productName: sel.productName, quantity: sel.quantityToDeliver)).toList();
@@ -556,7 +554,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
         for (var selItem in selectedItems) {
           var itemsToFind = selItem.quantityToDeliver;
-          var foundItems = availableItems.where((stockItem) => stockItem.productId == selItem.productId).take(itemsToFind).toList();
+          var foundItems = availableItems.where((stockItem) => stockItem.productId == selItem.productId && stockItem.logoType == selItem.logoType).take(itemsToFind).toList();
           stockItemsToUpdate.addAll(foundItems);
           for (var found in foundItems) {
             availableItems.remove(found);
@@ -595,13 +593,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   
   @override
   Widget build(BuildContext context) {
-    // =================================================================
-    // LÓGICA DE VISIBILIDADE DO BOTÃO DE EDITAR CORRIGIDA AQUI
-    // =================================================================
     final bool canBeEdited = _currentOrder.status == OrderStatus.cotacao || 
                              _currentOrder.status == OrderStatus.pedido ||
                              _currentOrder.status == OrderStatus.emFabricacao ||
                              _currentOrder.status == OrderStatus.aguardandoEntrega;
+
+    final bool canAttachProof = _currentOrder.status != OrderStatus.cotacao && 
+                                _currentOrder.status != OrderStatus.finalizado && 
+                                _currentOrder.status != OrderStatus.cancelado;
     
     final bool canCancel = _currentUserRole == 'admin' && 
                            _currentOrder.status != OrderStatus.finalizado && 
@@ -627,13 +626,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       appBar: AppBar(
         title: Text('Detalhes #${_currentOrder.id?.substring(0, 6).toUpperCase() ?? ''}'),
         actions: [
+          if (canAttachProof)
+            IconButton(icon: const Icon(Icons.attach_file), tooltip: 'Anexar Comprovante', onPressed: _attachProof),
+          
           if (canEditPayment)
             IconButton(
               icon: const Icon(Icons.edit_note),
               tooltip: 'Adicionar/Editar Distribuição de Pagamento',
               onPressed: _editPaymentDistribution,
             ),
-          // BOTÃO DE EDITAR AGORA USA A LÓGICA CORRETA
           if (canBeEdited) 
             IconButton(icon: const Icon(Icons.edit), tooltip: 'Editar Itens do Pedido', onPressed: _navigateToEditScreen),
 

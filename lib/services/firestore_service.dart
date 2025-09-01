@@ -7,6 +7,8 @@ import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:flutter/material.dart' hide Order;
 import 'package:intl/intl.dart';
 import 'package:rxdart/rxdart.dart';
+
+// Imports dos modelos
 import '../models/client_model.dart';
 import '../models/product_model.dart';
 import '../models/order_model.dart';
@@ -50,12 +52,12 @@ class FirestoreService {
       OrderStatus.emFabricacao.name,
       OrderStatus.finalizado.name,
       OrderStatus.aguardandoEntrega.name,
-      OrderStatus.aguardandoPagamentoFinal.name
+      OrderStatus.aguardandoPagamentoFinal.name,
+      OrderStatus.cancelado.name, // Inclui cancelado para filtrar depois
     ];
     
     Stream<List<Order>> ordersStream = _db
         .collection('orders')
-        .where('status', whereIn: validStatuses)
         .where('creationDate', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
         .where('creationDate', isLessThanOrEqualTo: Timestamp.fromDate(end))
         .snapshots()
@@ -71,32 +73,13 @@ class FirestoreService {
     return Rx.combineLatest2(
       ordersStream, expensesStream,
       (List<Order> orders, List<Expense> expenses) {
-        return {'orders': orders,'expenses': expenses,};
+        // Filtra aqui para garantir que os status inválidos não prossigam
+        final filteredOrders = orders.where((o) => validStatuses.contains(o.status.name)).toList();
+        return {'orders': filteredOrders,'expenses': expenses,};
       },
     );
   }
   
-  Future<void> confirmFinalPaymentAndUpdateStatus(String orderId, List<PaymentDistribution> distributions) async {
-    final order = await getOrderById(orderId);
-    if (order == null) return;
-    
-    await _db.collection('orders').doc(orderId).update({
-      'paymentDistributions': distributions.map((d) => d.toJson()).toList(),
-      'paymentStatus': PaymentStatus.pagoIntegralmente.name,
-    });
-    
-    await checkIfOrderIsFullyCompleted(orderId);
-  }
-  
-  Future<void> updateOrderPaymentDistribution(String orderId, List<PaymentDistribution> distributions) {
-    return _db.collection('orders').doc(orderId).update({
-      'paymentDistributions': distributions.map((d) => d.toJson()).toList(),
-    });
-  }
-
-  // ... (O restante do arquivo continua exatamente como você enviou, pois não precisa de mais alterações)
-  // Cole todo o resto do seu firestore_service.dart aqui
-  // ...
   Future<void> reallocateStockItem({
     required StockItem stockItemToMove,
     required Order targetOrder,
@@ -287,6 +270,9 @@ class FirestoreService {
   }
   Future<void> deleteOrder(String orderId) => _db.collection('orders').doc(orderId).delete();
 
+  // =================================================================
+  // FUNÇÃO DE CANCELAMENTO CORRIGIDA
+  // =================================================================
   Future<void> handleOrderCancellation(String orderId) async {
     final batch = _db.batch();
     final stockItemsCollection = _db.collection('stock_items');
@@ -296,14 +282,18 @@ class FirestoreService {
     for (final doc in querySnapshot.docs) {
       final stockItem = StockItem.fromFirestore(doc.data(), doc.id);
       
-      if (stockItem.status == StockItemStatus.emEstoque) {
+      // Se o item já foi produzido (está em estoque ou em trânsito), ele volta para o estoque geral.
+      if (stockItem.status == StockItemStatus.emEstoque || stockItem.status == StockItemStatus.emTransito) {
         batch.update(doc.reference, {
           'orderId': null,
           'clientName': null,
           'deliveryDeadline': null,
+          'deliveryId': null,
+          'status': StockItemStatus.emEstoque.name, // Garante que o status volte para "Em Estoque"
           'reallocatedFrom': 'Cancelado do Pedido #${orderId.substring(0, 6).toUpperCase()}',
         });
-      } else {
+      } else { 
+        // Se ainda estava "Aguardando Produção", é simplesmente deletado.
         batch.delete(doc.reference);
       }
     }
@@ -431,6 +421,24 @@ class FirestoreService {
     await checkIfOrderIsFullyCompleted(orderId);
   }
   
+  Future<void> confirmFinalPaymentAndUpdateStatus(String orderId, List<PaymentDistribution> distributions) async {
+    final order = await getOrderById(orderId);
+    if (order == null) return;
+    
+    await _db.collection('orders').doc(orderId).update({
+      'paymentDistributions': distributions.map((d) => d.toJson()).toList(),
+      'paymentStatus': PaymentStatus.pagoIntegralmente.name,
+    });
+    
+    await checkIfOrderIsFullyCompleted(orderId);
+  }
+  
+  Future<void> updateOrderPaymentDistribution(String orderId, List<PaymentDistribution> distributions) {
+    return _db.collection('orders').doc(orderId).update({
+      'paymentDistributions': distributions.map((d) => d.toJson()).toList(),
+    });
+  }
+
   Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
     final order = await getOrderById(orderId);
     if (order == null || order.status == OrderStatus.finalizado) return;
@@ -711,5 +719,31 @@ class FirestoreService {
     
     debugPrint('$updatedCount itens de estoque foram atualizados de "Em Branco" para "Nenhum".');
     return updatedCount;
+  }
+
+  // =================================================================
+  // NOVA FUNÇÃO PARA CANCELAR ENTREGA
+  // =================================================================
+  Future<void> cancelDelivery(String deliveryId) async {
+    final batch = _db.batch();
+    final deliveryRef = _db.collection('deliveries').doc(deliveryId);
+
+    // 1. Encontra os itens de estoque associados a esta entrega
+    final stockItemsSnapshot = await _db.collection('stock_items')
+        .where('deliveryId', isEqualTo: deliveryId)
+        .get();
+
+    // 2. Para cada item, reverte o status para 'emEstoque' e limpa o deliveryId
+    for (final doc in stockItemsSnapshot.docs) {
+      batch.update(doc.reference, {
+        'status': StockItemStatus.emEstoque.name,
+        'deliveryId': null,
+      });
+    }
+
+    // 3. Deleta o registro da entrega
+    batch.delete(deliveryRef);
+
+    await batch.commit();
   }
 }

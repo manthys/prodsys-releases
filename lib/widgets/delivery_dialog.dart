@@ -3,24 +3,7 @@
 import 'package:flutter/material.dart';
 import '../models/order_model.dart';
 import '../models/stock_item_model.dart';
-import '../models/product_model.dart';
-
-// Classe auxiliar para gerenciar a contagem de itens na UI
-class DeliverySelectionItem {
-  final String productId;
-  final String sku;
-  final String productName;
-  final int maxQuantity; // Máximo que pode ser enviado
-  int quantityToDeliver; // Quantidade selecionada para esta entrega
-
-  DeliverySelectionItem({
-    required this.productId,
-    required this.sku,
-    required this.productName,
-    required this.maxQuantity,
-    this.quantityToDeliver = 0,
-  });
-}
+import '../models/delivery_selection_item_model.dart'; // Importa a classe do novo arquivo
 
 class DeliveryDialog extends StatefulWidget {
   final Order order;
@@ -63,14 +46,13 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
         sku: parts[1],
         productName: parts[2],
         maxQuantity: entry.value,
-        quantityToDeliver: entry.value, // Começa com todos selecionados
+        quantityToDeliver: entry.value,
       );
     }).toList();
   }
 
   void _submit() {
     if (_formKey.currentState!.validate()) {
-      // Filtra apenas os itens que o usuário quer entregar (quantidade > 0)
       final itemsToDeliver = _selectionItems
           .where((item) => item.quantityToDeliver > 0)
           .toList();
@@ -82,7 +64,6 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
         return;
       }
 
-      // Retorna os dados para a tela de detalhes do pedido
       Navigator.of(context).pop({
         'driverName': _driverNameController.text,
         'vehiclePlate': _vehiclePlateController.text,
@@ -142,14 +123,15 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
                               decoration: const InputDecoration(labelText: 'Qtd.'),
                               onChanged: (value) {
                                 final qty = int.tryParse(value) ?? 0;
-                                if (qty <= item.maxQuantity) {
-                                  item.quantityToDeliver = qty;
-                                }
+                                item.quantityToDeliver = qty;
                               },
                               validator: (value) {
                                 final qty = int.tryParse(value ?? '') ?? 0;
                                 if (qty > item.maxQuantity) {
                                   return 'Máx: ${item.maxQuantity}';
+                                }
+                                if(qty < 0){
+                                  return 'Inválido';
                                 }
                                 return null;
                               },
@@ -159,7 +141,7 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
                       ),
                     ),
                   );
-                }).toList(),
+                }),
               ],
             ),
           ),

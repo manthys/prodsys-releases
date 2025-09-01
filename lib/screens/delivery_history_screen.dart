@@ -29,6 +29,7 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
   final FirestoreService _firestoreService = FirestoreService();
   final DeliveryPdfService _deliveryPdfService = DeliveryPdfService();
   bool _isGeneratingPdf = false;
+  bool _isProcessing = false;
 
   void _generateDeliveryNotePdf(Delivery delivery) async {
     setState(() => _isGeneratingPdf = true);
@@ -57,9 +58,51 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
     );
 
     if (confirm == true) {
-      await _firestoreService.confirmDeliveryAsCompleted(widget.order.id!, delivery.id!);
-      if(mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Entrega confirmada com sucesso!'), backgroundColor: Colors.green));
+      setState(() => _isProcessing = true);
+      try {
+        await _firestoreService.confirmDeliveryAsCompleted(widget.order.id!, delivery.id!);
+        if(mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Entrega confirmada com sucesso!'), backgroundColor: Colors.green));
+        }
+      } catch (e) {
+         if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao confirmar entrega: $e'), backgroundColor: Colors.red));
+      } finally {
+        if(mounted) setState(() => _isProcessing = false);
+      }
+    }
+  }
+
+  // =================================================================
+  // NOVA FUNÇÃO PARA CANCELAR ENTREGA
+  // =================================================================
+  void _cancelDelivery(Delivery delivery) async {
+     final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cancelar Entrega'),
+        content: const Text('Tem certeza que deseja cancelar esta saída? Os itens retornarão ao status "Em Estoque".'),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Não')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('Sim, Cancelar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      setState(() => _isProcessing = true);
+      try {
+        await _firestoreService.cancelDelivery(delivery.id!);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Entrega cancelada e itens retornaram ao estoque.'), backgroundColor: Colors.orange));
+        }
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Erro ao cancelar entrega: $e'), backgroundColor: Colors.red));
+      } finally {
+        if (mounted) setState(() => _isProcessing = false);
       }
     }
   }
@@ -71,7 +114,7 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
         title: Text('Entregas do Pedido #${widget.order.id?.substring(0, 6).toUpperCase()}'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
-          if (_isGeneratingPdf)
+          if (_isGeneratingPdf || _isProcessing)
             const Padding(padding: EdgeInsets.all(16.0), child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)))
         ],
       ),
@@ -104,7 +147,7 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
                     isDelivered ? Icons.check_circle : Icons.local_shipping,
                     color: isDelivered ? Colors.green : Colors.blue,
                   ),
-                  title: Text('Entrega de ${DateFormat('dd/MM/yyyy').format(delivery.deliveryDate.toDate())}'),
+                  title: Text('Saída de ${DateFormat('dd/MM/yyyy HH:mm').format(delivery.deliveryDate.toDate())}'),
                   subtitle: Text('Motorista: ${delivery.driverName} | Itens: $totalItems\nStatus: ${isDelivered ? 'Entregue' : 'Em Trânsito'}'),
                   isThreeLine: true,
                   trailing: Row(
@@ -115,7 +158,14 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
                         tooltip: 'Imprimir Nota de Entrega',
                         onPressed: () => _generateDeliveryNotePdf(delivery),
                       ),
-                      // Desabilita o botão se a entrega já foi confirmada
+                      // Desabilita os botões se a entrega já foi confirmada
+                      if (!isDelivered)
+                        IconButton(
+                          icon: const Icon(Icons.cancel_outlined, color: Colors.red),
+                          tooltip: 'Cancelar Saída',
+                          onPressed: () => _cancelDelivery(delivery),
+                        ),
+
                       IconButton(
                         icon: Icon(
                           Icons.check_circle_outline,

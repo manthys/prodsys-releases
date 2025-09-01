@@ -5,25 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/order_model.dart';
 import '../models/stock_item_model.dart';
-
-// Este modelo já existe no delivery_dialog, pode ser reutilizado.
-class DeliverySelectionItem {
-  final String productId;
-  final String productName;
-  final String sku;
-  final String logoType;
-  final int maxQuantity;
-  int quantityToDeliver;
-
-  DeliverySelectionItem({
-    required this.productId,
-    required this.productName,
-    required this.sku,
-    required this.logoType,
-    required this.maxQuantity,
-    this.quantityToDeliver = 0,
-  });
-}
+import '../models/delivery_selection_item_model.dart'; // Importa a classe do novo arquivo
 
 class PickupDialog extends StatefulWidget {
   final Order order;
@@ -63,7 +45,7 @@ class _PickupDialogState extends State<PickupDialog> {
         sku: firstItem.sku,
         logoType: firstItem.logoType,
         maxQuantity: entry.value.length,
-        quantityToDeliver: entry.value.length, // Preenche com o máximo por padrão
+        quantityToDeliver: entry.value.length,
       );
     }).toList();
   }
