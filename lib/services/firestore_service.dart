@@ -2,6 +2,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'package:collection/collection.dart';
 import 'package:http/http.dart' as http;
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:flutter/material.dart' hide Order;
@@ -52,6 +53,60 @@ class FirestoreService {
     
     debugPrint('Sincronização concluída. $updatedCount pedidos foram verificados/atualizados.');
     return updatedCount;
+  }
+
+  // ##### ESTA É A FUNÇÃO PRINCIPAL QUE FOI CORRIGIDA #####
+  Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
+    final order = await getOrderById(orderId);
+    if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado) return;
+
+    // A verificação agora usa a fonte de dados confiável: o histórico de entregas.
+    final deliveries = await getDeliveriesForOrderStream(orderId).first;
+
+    bool allItemsDelivered = true;
+    
+    if (order.items.isNotEmpty) {
+      for (final orderItem in order.items) {
+        int deliveredCount = 0;
+        for (final delivery in deliveries) {
+          for (final deliveryItem in delivery.items) {
+            // Compara o ID do produto para somar as quantidades
+            if (deliveryItem.productId == orderItem.productId) {
+                // Para ser preciso, precisamos garantir que estamos somando itens com o mesmo tipo de logo.
+                // Buscamos o item de pedido correspondente para inferir o tipo de logo da entrega.
+                final orderItemRef = order.items.firstWhereOrNull((oi) => oi.sku == deliveryItem.sku && oi.productId == deliveryItem.productId);
+                final logoType = orderItemRef?.logoType ?? 'Nenhum'; // Fallback
+                if (logoType == orderItem.logoType) {
+                    deliveredCount += deliveryItem.quantity;
+                }
+            }
+          }
+        }
+        if (deliveredCount < orderItem.quantity) {
+          allItemsDelivered = false;
+          break; // Se um item não bate, já sabemos que o pedido não está completo.
+        }
+      }
+    }
+
+    final isFullyPaid = order.paymentStatus == PaymentStatus.pagoIntegralmente;
+
+    if (allItemsDelivered) {
+      if (isFullyPaid) {
+        await updateOrderStatus(orderId, OrderStatus.finalizado);
+      } else {
+        await updateOrderStatus(orderId, OrderStatus.aguardandoPagamentoFinal);
+      }
+    } else {
+       // Se os itens não foram todos entregues, mas já saíram da produção, o status deve ser "Aguardando Entrega".
+       if (order.status == OrderStatus.emFabricacao) {
+         final stockItems = await getStockItemsForOrder(orderId);
+         final hasPendingProduction = stockItems.any((item) => item.status == StockItemStatus.aguardandoProducao);
+         if (!hasPendingProduction) {
+           await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
+         }
+       }
+    }
   }
 
   Stream<List<Order>> getOperationalOrdersStream() {
@@ -453,54 +508,6 @@ class FirestoreService {
     return _db.collection('orders').doc(orderId).update({
       'paymentDistributions': distributions.map((d) => d.toJson()).toList(),
     });
-  }
-
-  // ##### FUNÇÃO QUE ESTAVA FALTANDO #####
-  Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
-    final order = await getOrderById(orderId);
-    if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado) return;
-
-    final allStockItemsForOrder = await getStockItemsForOrder(orderId);
-    
-    final deliveredStockItems = allStockItemsForOrder
-        .where((item) => item.status == StockItemStatus.entregue)
-        .toList();
-
-    bool allItemsDelivered = true;
-    
-    if (order.items.isEmpty) {
-        allItemsDelivered = true;
-    } else {
-      for (final orderItem in order.items) {
-        final count = deliveredStockItems
-            .where((stockItem) =>
-                stockItem.productId == orderItem.productId &&
-                stockItem.logoType == orderItem.logoType)
-            .length;
-
-        if (count < orderItem.quantity) {
-          allItemsDelivered = false;
-          break;
-        }
-      }
-    }
-
-    final isFullyPaid = order.paymentStatus == PaymentStatus.pagoIntegralmente;
-
-    if (allItemsDelivered) {
-      if (isFullyPaid) {
-        await updateOrderStatus(orderId, OrderStatus.finalizado);
-      } else {
-        await updateOrderStatus(orderId, OrderStatus.aguardandoPagamentoFinal);
-      }
-    } else {
-       if (order.status == OrderStatus.emFabricacao) {
-         final hasPendingProduction = allStockItemsForOrder.any((item) => item.status == StockItemStatus.aguardandoProducao);
-         if (!hasPendingProduction) {
-           await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
-         }
-       }
-    }
   }
 
   Stream<List<Mold>> getMoldsStream() => _db.collection('molds').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Mold.fromFirestore(doc.data(), doc.id)).toList());
