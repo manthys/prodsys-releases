@@ -363,8 +363,8 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
           return TabBarView(
             controller: _tabController,
             children: [
-              _buildGeneralStockList(manualStock), // Alterado para a nova função
-              _buildAllocatedStockList(allocatedStock), // Alterado para a nova função
+              _buildGeneralStockList(manualStock),
+              _buildAllocatedStockList(allocatedStock),
             ],
           );
         },
@@ -372,7 +372,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     );
   }
 
-  // ##### ALTERAÇÃO: Função renomeada e com ordenação alfabética #####
   Widget _buildGeneralStockList(List<StockItem> items) {
     if (items.isEmpty) {
       return const Center(child: Text('Nenhum item encontrado com os filtros aplicados.'));
@@ -391,7 +390,6 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     }
     final groupedList = groupedItems.values.toList();
     
-    // Ordena a lista alfabeticamente pelo nome do produto
     groupedList.sort((a, b) => (a['item'] as StockItem).productName.compareTo((b['item'] as StockItem).productName));
 
     return ListView.builder(
@@ -404,16 +402,13 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     );
   }
 
-  // ##### ALTERAÇÃO: Nova função para construir a lista de estoque alocado, agrupada por pedido #####
   Widget _buildAllocatedStockList(List<StockItem> items) {
     if (items.isEmpty) {
       return const Center(child: Text('Nenhum item alocado encontrado com os filtros aplicados.'));
     }
 
-    // Agrupa os itens por ID do pedido
     final groupedByOrder = groupBy(items, (StockItem item) => item.orderId!);
     
-    // Ordena os pedidos (pelo nome do cliente para consistência)
     final sortedOrderIds = groupedByOrder.keys.toList()
       ..sort((a, b) {
         final clientA = groupedByOrder[a]!.first.clientName ?? '';
@@ -430,13 +425,12 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
         final firstItem = orderItems.first;
         final orderIdShort = orderId.length >= 6 ? orderId.substring(0, 6).toUpperCase() : orderId.toUpperCase();
         
-        // Agrupa os itens dentro do pedido por produto
         final itemsGroupedByProduct = groupBy(orderItems, (StockItem item) => '${item.productId}_${item.status.name}_${item.logoType}');
         
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
           child: ExpansionTile(
-            key: PageStorageKey(orderId), // Chave para manter o estado (aberto/fechado)
+            key: PageStorageKey(orderId),
             title: Text(
               'Pedido #$orderIdShort - ${firstItem.clientName}',
               style: const TextStyle(fontWeight: FontWeight.bold),
@@ -592,6 +586,7 @@ class _FilterDialogState extends State<_FilterDialog> {
             DropdownButtonFormField<Product>(
               value: _selectedProduct,
               hint: const Text('Todos os produtos'),
+              isExpanded: true,
               items: widget.allProducts.map((product) => DropdownMenuItem(
                 value: product,
                 child: Text('${product.sku} - ${product.name}', overflow: TextOverflow.ellipsis),

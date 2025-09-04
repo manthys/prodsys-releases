@@ -1,6 +1,7 @@
 // lib/screens/order_details_screen.dart
 
 import 'dart:io';
+import 'dart:math';
 import 'package:collection/collection.dart';
 import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:file_picker/file_picker.dart';
@@ -18,7 +19,7 @@ import '../models/order_item_model.dart';
 import '../models/stock_item_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
-import '../models/delivery_selection_item_model.dart'; // <<< IMPORT ADICIONADO E CORRIGIDO
+import '../models/delivery_selection_item_model.dart'; 
 
 // Imports dos serviços
 import '../services/auth_service.dart';
@@ -51,12 +52,15 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   final AuthService _authService = AuthService();
   final PdfService _orderPdfService = PdfService();
   final ReceiptPdfService _receiptPdfService = ReceiptPdfService();
+  final DeliveryPdfService _deliveryPdfService = DeliveryPdfService();
   late final ProductionSimulator _simulator;
   late Order _currentOrder;
   bool _isGeneratingPdf = false;
   bool _isUploading = false;
   List<StockItem>? _stockItemsForOrder;
-  bool _isLoadingStockItems = true;
+  List<Delivery>? _deliveriesForOrder;
+
+  bool _isLoading = true;
   DateTime? _recalculatedDeliveryDate;
   bool _isRecalculatingDate = false;
   String? _currentUserRole;
@@ -66,29 +70,42 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     super.initState();
     _currentOrder = widget.order;
     _simulator = ProductionSimulator(_firestoreService);
-    _recalculateDateIfNeeded();
-    _loadAssociatedStockItems();
-    _loadCurrentUserRole();
+    _loadInitialData();
   }
   
-  Future<void> _loadCurrentUserRole() async {
-    final user = _authService.currentUser;
-    if (user != null) {
-      final role = await _authService.getUserRole(user.uid);
-      if (mounted) setState(() => _currentUserRole = role);
+  Future<void> _loadInitialData() async {
+    setState(() => _isLoading = true);
+    
+    final results = await Future.wait([
+      _firestoreService.getStockItemsForOrder(_currentOrder.id!),
+      _firestoreService.getDeliveriesForOrderStream(_currentOrder.id!).first,
+      _authService.getUserRole(_authService.currentUser!.uid),
+    ]);
+
+    if(mounted) {
+      setState(() {
+        _stockItemsForOrder = results[0] as List<StockItem>;
+        _deliveriesForOrder = results[1] as List<Delivery>;
+        _currentUserRole = results[2] as String;
+        _isLoading = false;
+      });
+      _recalculateDateIfNeeded();
     }
   }
 
-  Future<void> _loadAssociatedStockItems() async {
-    if (!mounted) return;
-    setState(() => _isLoadingStockItems = true);
-    final items = await _firestoreService.getStockItemsForOrder(_currentOrder.id!);
-    if (mounted) {
+  Future<void> _reloadOrder() async {
+    final updatedOrder = await _firestoreService.getOrderById(_currentOrder.id!);
+    if (updatedOrder != null && mounted) {
       setState(() {
-        _stockItemsForOrder = items;
-        _isLoadingStockItems = false;
+        _currentOrder = updatedOrder;
       });
+      await _loadInitialData();
     }
+  }
+  
+  void _showSnackBar(String message, {bool isError = false}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : Colors.green));
   }
 
   Future<void> _recalculateDateIfNeeded() async {
@@ -103,20 +120,51 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       }
     }
   }
-  
-  Future<void> _reloadOrder() async {
-    final updatedOrder = await _firestoreService.getOrderById(_currentOrder.id!);
-    if (updatedOrder != null && mounted) {
-      setState(() => _currentOrder = updatedOrder);
-      _recalculateDateIfNeeded();
-      _loadAssociatedStockItems();
-    }
-  }
 
-  void _showSnackBar(String message, {bool isError = false}) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message), backgroundColor: isError ? Colors.red : Colors.green));
+  List<DeliverySelectionItem> _prepareSelectionItems() {
+      if (_stockItemsForOrder == null || _deliveriesForOrder == null) return [];
+
+      final availableInStock = groupBy(
+          _stockItemsForOrder!.where((item) => item.status == StockItemStatus.emEstoque),
+          (StockItem item) => '${item.productId}-${item.logoType}'
+      );
+
+      final alreadyDeliveredCount = <String, int>{};
+      for (final delivery in _deliveriesForOrder!) {
+          for (final deliveredItem in delivery.items) {
+              final orderItemRef = _currentOrder.items.firstWhereOrNull((oi) => oi.sku == deliveredItem.sku && oi.productId == deliveredItem.productId);
+              final logoType = orderItemRef?.logoType ?? 'Nenhum';
+              final key = '${deliveredItem.productId}-$logoType';
+              alreadyDeliveredCount.update(key, (value) => value + deliveredItem.quantity, ifAbsent: () => deliveredItem.quantity);
+          }
+      }
+
+      final selectionItems = <DeliverySelectionItem>[];
+      for (final orderItem in _currentOrder.items) {
+          final key = '${orderItem.productId}-${orderItem.logoType}';
+          final inStockCount = availableInStock[key]?.length ?? 0;
+          
+          if (inStockCount > 0) {
+              final deliveredCount = alreadyDeliveredCount[key] ?? 0;
+              final neededCount = orderItem.quantity - deliveredCount;
+
+              if (neededCount > 0) {
+                  selectionItems.add(
+                      DeliverySelectionItem(
+                          productId: orderItem.productId,
+                          sku: orderItem.sku,
+                          productName: orderItem.productName,
+                          logoType: orderItem.logoType,
+                          maxQuantity: inStockCount < neededCount ? inStockCount : neededCount,
+                          quantityToDeliver: inStockCount < neededCount ? inStockCount : neededCount,
+                      )
+                  );
+              }
+          }
+      }
+      return selectionItems;
   }
+  
   void _generateOrderPdf() async {
     setState(() => _isGeneratingPdf = true);
     try {
@@ -454,122 +502,129 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   void _registerPickup() async {
-    final itemsReadyForPickup = (_stockItemsForOrder ?? [])
-        .where((item) => item.status == StockItemStatus.emEstoque)
-        .toList();
+      final selectionItems = _prepareSelectionItems();
 
-    if (itemsReadyForPickup.isEmpty) {
-      _showSnackBar('Não há itens em estoque prontos para retirada deste pedido.', isError: true);
-      return;
-    }
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => PickupDialog(order: _currentOrder, itemsReadyForPickup: itemsReadyForPickup),
-    );
-
-    if (result != null) {
-      setState(() => _isUploading = true);
-      try {
-        final List<DeliverySelectionItem> selectedItems = result['selectedItems'];
-        final currentUser = _authService.currentUser;
-        
-        final deliveryItems = selectedItems
-            .map((sel) => DeliveryItem(
-                  productId: sel.productId,
-                  sku: sel.sku,
-                  productName: sel.productName,
-                  quantity: sel.quantityToDeliver,
-                ))
-            .toList();
-
-        final newDelivery = Delivery(
-          orderId: _currentOrder.id!,
-          clientName: _currentOrder.clientName,
-          deliveryDate: Timestamp.now(),
-          items: deliveryItems,
-          driverName: 'Retirada na Empresa',
-          vehiclePlate: 'N/A',
-          createdByUserName: currentUser?.displayName ?? currentUser?.email ?? 'N/A',
-        );
-
-        List<StockItem> stockItemsToUpdate = [];
-        List<StockItem> availableItems = List.from(itemsReadyForPickup);
-        for (var selItem in selectedItems) {
-          var itemsToFind = selItem.quantityToDeliver;
-          var foundItems = availableItems
-              .where((stockItem) => stockItem.productId == selItem.productId && stockItem.logoType == selItem.logoType)
-              .take(itemsToFind)
-              .toList();
-          stockItemsToUpdate.addAll(foundItems);
-          for (var found in foundItems) {
-            availableItems.remove(found);
-          }
-        }
-        
-        await _firestoreService.createPickupAndUpdateStock(newDelivery, stockItemsToUpdate);
-        _showSnackBar('Retirada registrada com sucesso!');
-      } catch (e) {
-        _showSnackBar('Erro ao registrar retirada: $e', isError: true);
-      } finally {
-        if (mounted) setState(() => _isUploading = false);
-        _reloadOrder();
+      if (selectionItems.isEmpty) {
+          _showSnackBar('Não há itens em estoque prontos para retirada deste pedido.', isError: true);
+          return;
       }
-    }
+
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => PickupDialog(order: _currentOrder, itemsReadyForPickup: selectionItems),
+      );
+
+      if (result != null) {
+          setState(() => _isUploading = true);
+          try {
+            final List<DeliverySelectionItem> selectedItems = result['selectedItems'];
+            final String pickupPersonName = result['pickupPersonName'];
+            final String vehiclePlate = result['vehiclePlate'];
+            final currentUser = _authService.currentUser;
+            
+            final deliveryItems = selectedItems
+                .map((sel) => DeliveryItem(
+                      productId: sel.productId,
+                      sku: sel.sku,
+                      productName: sel.productName,
+                      quantity: sel.quantityToDeliver,
+                    ))
+                .toList();
+    
+            final newDelivery = Delivery(
+              orderId: _currentOrder.id!,
+              clientName: _currentOrder.clientName,
+              deliveryDate: Timestamp.now(),
+              items: deliveryItems,
+              driverName: pickupPersonName, 
+              vehiclePlate: vehiclePlate,
+              createdByUserName: currentUser?.displayName ?? currentUser?.email ?? 'N/A',
+            );
+    
+            List<StockItem> stockItemsToUpdate = [];
+            List<StockItem> availableItems = List.from(_stockItemsForOrder!.where((i) => i.status == StockItemStatus.emEstoque));
+            for (var selItem in selectedItems) {
+              var itemsToFind = selItem.quantityToDeliver;
+              var foundItems = availableItems
+                  .where((stockItem) => stockItem.productId == selItem.productId && stockItem.logoType == selItem.logoType)
+                  .take(itemsToFind)
+                  .toList();
+              stockItemsToUpdate.addAll(foundItems);
+              for (var found in foundItems) {
+                availableItems.remove(found);
+              }
+            }
+            
+            final deliveryId = await _firestoreService.createPickupAndUpdateStock(newDelivery, stockItemsToUpdate);
+    
+            final client = await _firestoreService.getClientById(_currentOrder.clientId);
+            final companySettings = await _firestoreService.getCompanySettings();
+            if (client != null && mounted) {
+               final deliveryData = newDelivery.toJson();
+               final createdDelivery = Delivery.fromFirestore(deliveryData, deliveryId);
+               await _deliveryPdfService.generateAndShowPdf(createdDelivery, _currentOrder, client, companySettings);
+            }
+    
+            _showSnackBar('Retirada registrada com sucesso!');
+          } catch (e) {
+            _showSnackBar('Erro ao registrar retirada: $e', isError: true);
+          } finally {
+            if (mounted) setState(() => _isUploading = false);
+            _reloadOrder();
+          }
+      }
   }
 
   void _showDeliveryDialog() async {
-    final itemsReadyForDelivery = (_stockItemsForOrder ?? [])
-        .where((item) => item.status == StockItemStatus.emEstoque)
-        .toList();
+      final selectionItems = _prepareSelectionItems();
 
-    if (itemsReadyForDelivery.isEmpty) {
-      _showSnackBar('Não há itens em estoque prontos para entrega deste pedido.', isError: true);
-      return;
-    }
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => DeliveryDialog(order: _currentOrder, itemsReadyForDelivery: itemsReadyForDelivery),
-    );
-
-    if (result != null) {
-      setState(() => _isUploading = true);
-      try {
-        final driverName = result['driverName'] as String;
-        final vehiclePlate = result['vehiclePlate'] as String;
-        final List<DeliverySelectionItem> selectedItems = result['selectedItems'];
-        final currentUser = _authService.currentUser;
-
-        final deliveryItems = selectedItems.map((sel) => DeliveryItem(productId: sel.productId, sku: sel.sku, productName: sel.productName, quantity: sel.quantityToDeliver)).toList();
-        
-        final newDelivery = Delivery(
-          orderId: _currentOrder.id!, clientName: _currentOrder.clientName, deliveryDate: Timestamp.now(),
-          items: deliveryItems, driverName: driverName, vehiclePlate: vehiclePlate,
-          createdByUserName: currentUser?.displayName ?? currentUser?.email ?? 'N/A',
-        );
-
-        List<StockItem> stockItemsToUpdate = [];
-        List<StockItem> availableItems = List.from(itemsReadyForDelivery);
-
-        for (var selItem in selectedItems) {
-          var itemsToFind = selItem.quantityToDeliver;
-          var foundItems = availableItems.where((stockItem) => stockItem.productId == selItem.productId && stockItem.logoType == selItem.logoType).take(itemsToFind).toList();
-          stockItemsToUpdate.addAll(foundItems);
-          for (var found in foundItems) {
-            availableItems.remove(found);
-          }
-        }
-
-        await _firestoreService.createDeliveryAndUpdateStock(newDelivery, stockItemsToUpdate);
-        _showSnackBar('Entrega registrada com sucesso!');
-      } catch(e) {
-        _showSnackBar('Erro ao registrar entrega: $e', isError: true);
-      } finally {
-        if(mounted) setState(() => _isUploading = false);
-        _reloadOrder();
+      if (selectionItems.isEmpty) {
+          _showSnackBar('Não há itens em estoque prontos para entrega deste pedido.', isError: true);
+          return;
       }
-    }
+
+      final result = await showDialog<Map<String, dynamic>>(
+        context: context,
+        builder: (context) => DeliveryDialog(order: _currentOrder, itemsReadyForDelivery: selectionItems),
+      );
+
+      if (result != null) {
+          setState(() => _isUploading = true);
+          try {
+            final driverName = result['driverName'] as String;
+            final vehiclePlate = result['vehiclePlate'] as String;
+            final List<DeliverySelectionItem> selectedItems = result['selectedItems'];
+            final currentUser = _authService.currentUser;
+    
+            final deliveryItems = selectedItems.map((sel) => DeliveryItem(productId: sel.productId, sku: sel.sku, productName: sel.productName, quantity: sel.quantityToDeliver)).toList();
+            
+            final newDelivery = Delivery(
+              orderId: _currentOrder.id!, clientName: _currentOrder.clientName, deliveryDate: Timestamp.now(),
+              items: deliveryItems, driverName: driverName, vehiclePlate: vehiclePlate,
+              createdByUserName: currentUser?.displayName ?? currentUser?.email ?? 'N/A',
+            );
+    
+            List<StockItem> stockItemsToUpdate = [];
+            List<StockItem> availableItems = List.from(_stockItemsForOrder!.where((i) => i.status == StockItemStatus.emEstoque));
+    
+            for (var selItem in selectedItems) {
+              var itemsToFind = selItem.quantityToDeliver;
+              var foundItems = availableItems.where((stockItem) => stockItem.productId == selItem.productId && stockItem.logoType == selItem.logoType).take(itemsToFind).toList();
+              stockItemsToUpdate.addAll(foundItems);
+              for (var found in foundItems) {
+                availableItems.remove(found);
+              }
+            }
+    
+            await _firestoreService.createDeliveryAndUpdateStock(newDelivery, stockItemsToUpdate);
+            _showSnackBar('Entrega registrada com sucesso!');
+          } catch(e) {
+            _showSnackBar('Erro ao registrar entrega: $e', isError: true);
+          } finally {
+            if(mounted) setState(() => _isUploading = false);
+            _reloadOrder();
+          }
+      }
   }
 
   void _forceRecheckStatus() async {
@@ -577,12 +632,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     _showSnackBar('Verificando status...', isError: false);
 
     try {
-      if (_currentOrder.status == OrderStatus.emFabricacao) {
-        await _firestoreService.checkAndUpdateOrderStatusAfterProduction(_currentOrder.id!);
-      } 
-      else if (_currentOrder.status == OrderStatus.aguardandoEntrega || _currentOrder.status == OrderStatus.aguardandoPagamentoFinal) {
-        await _firestoreService.checkIfOrderIsFullyCompleted(_currentOrder.id!);
-      }
+      await _firestoreService.checkIfOrderIsFullyCompleted(_currentOrder.id!);
       _showSnackBar('Verificação de status concluída.');
     } catch(e) {
       _showSnackBar('Erro ao verificar status: $e', isError: true);
@@ -594,23 +644,23 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     final bool canBeEdited = _currentOrder.status == OrderStatus.cotacao || 
-                             _currentOrder.status == OrderStatus.pedido ||
-                             _currentOrder.status == OrderStatus.emFabricacao ||
-                             _currentOrder.status == OrderStatus.aguardandoEntrega;
+                              _currentOrder.status == OrderStatus.pedido ||
+                              _currentOrder.status == OrderStatus.emFabricacao ||
+                              _currentOrder.status == OrderStatus.aguardandoEntrega;
 
     final bool canAttachProof = _currentOrder.status != OrderStatus.cotacao && 
                                 _currentOrder.status != OrderStatus.finalizado && 
                                 _currentOrder.status != OrderStatus.cancelado;
     
     final bool canCancel = _currentUserRole == 'admin' && 
-                           _currentOrder.status != OrderStatus.finalizado && 
-                           _currentOrder.status != OrderStatus.cancelado;
-                           
+                            _currentOrder.status != OrderStatus.finalizado && 
+                            _currentOrder.status != OrderStatus.cancelado;
+                            
     final bool canEditPayment = _currentUserRole == 'admin' && 
                                 (_currentOrder.status == OrderStatus.emFabricacao ||
-                                 _currentOrder.status == OrderStatus.aguardandoEntrega ||
-                                 _currentOrder.status == OrderStatus.aguardandoPagamentoFinal ||
-                                 _currentOrder.status == OrderStatus.finalizado);
+                                  _currentOrder.status == OrderStatus.aguardandoEntrega ||
+                                  _currentOrder.status == OrderStatus.aguardandoPagamentoFinal ||
+                                  _currentOrder.status == OrderStatus.finalizado);
     
     final bool needsRefund = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true;
     String? refundAmountString;
@@ -657,46 +707,52 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: SingleChildScrollView(padding: const EdgeInsets.all(16.0), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        _buildClientInfoSection(needsRefund: needsRefund),
-        if (needsRefund)
-          Padding(
-            padding: const EdgeInsets.only(top: 16.0),
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange.shade200)
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Text(
-                      'Atenção: Este pedido requer o processamento de um reembolso de ${refundAmountString ?? "valor não especificado"}.',
-                      style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.bold),
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator())
+        : SingleChildScrollView(
+            padding: const EdgeInsets.all(16.0), 
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, 
+              children: [
+                _buildClientInfoSection(needsRefund: needsRefund),
+                if (needsRefund)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16.0),
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade50,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.orange.shade200)
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Atenção: Este pedido requer o processamento de um reembolso de ${refundAmountString ?? "valor não especificado"}.',
+                              style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ],
-              ),
-            ),
+                const SizedBox(height: 24), 
+                _buildItemsSection(),
+                const Divider(), 
+                _buildTotalsSection(), 
+                _buildPaymentDistributionSection(), 
+                const SizedBox(height: 24), 
+                _buildNotesSection(), 
+                _buildAttachmentsSection(), 
+                const SizedBox(height: 32),
+                if (_isUploading) const Center(child: Padding(padding: const EdgeInsets.all(16.0), child: CircularProgressIndicator()))
+                else _buildActionButtons(),
+              ]
+            )
           ),
-        const SizedBox(height: 24), 
-        _isLoadingStockItems
-          ? const Center(child: CircularProgressIndicator())
-          : _buildItemsSection(_stockItemsForOrder ?? []),
-        const Divider(), 
-        _buildTotalsSection(), 
-        _buildPaymentDistributionSection(), 
-        const SizedBox(height: 24), 
-        _buildNotesSection(), 
-        _buildAttachmentsSection(), 
-        const SizedBox(height: 32),
-        if (_isUploading) const Center(child: Padding(padding: EdgeInsets.all(16.0), child: CircularProgressIndicator()))
-        else _buildActionButtons(),
-      ])),
     );
   }
   
@@ -740,34 +796,63 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       ])
     ]);
   }
-  
-  Widget _buildItemsSection(List<StockItem> stockItems) {
+
+  Widget _buildItemsSection() {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text('Itens do Pedido:', style: Theme.of(context).textTheme.titleMedium),
         const Divider(),
-        ..._currentOrder.items.map((item) {
-          final deliveredCount = stockItems.where((stockItem) =>
-            stockItem.productId == item.productId &&
-            stockItem.logoType == item.logoType &&
-            (stockItem.status == StockItemStatus.entregue || stockItem.status == StockItemStatus.emTransito)
-          ).length;
+        ..._currentOrder.items.map((orderItem) {
+          
+          final producedCount = (_stockItemsForOrder ?? [])
+              .where((stockItem) =>
+                  stockItem.productId == orderItem.productId &&
+                  stockItem.logoType == orderItem.logoType &&
+                  stockItem.status != StockItemStatus.aguardandoProducao)
+              .length;
+          
+          int deliveredCount = 0;
+          if (_deliveriesForOrder != null) {
+            for (final delivery in _deliveriesForOrder!) {
+              for (final deliveryItem in delivery.items) {
+                 final orderItemRef = _currentOrder.items.firstWhereOrNull((oi) => oi.sku == deliveryItem.sku && oi.productId == deliveryItem.productId);
+                 final logoType = orderItemRef?.logoType ?? 'Nenhum';
+                if (deliveryItem.productId == orderItem.productId && logoType == orderItem.logoType) {
+                    deliveredCount += deliveryItem.quantity;
+                }
+              }
+            }
+          }
 
-          final subtitleText = 'SKU: ${item.sku}\n'
-                               '${item.quantity} x ${currencyFormatter.format(item.finalUnitPrice)}\n'
-                               'Entregues/Retirados: $deliveredCount de ${item.quantity}';
+          final inStockCount = max(0, producedCount - deliveredCount);
 
           return ListTile(
             contentPadding: EdgeInsets.zero,
-            title: Text(item.productName),
-            subtitle: Text(subtitleText),
+            title: Text(orderItem.productName),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('SKU: ${orderItem.sku}'),
+                Text('${orderItem.quantity} x ${currencyFormatter.format(orderItem.finalUnitPrice)}'),
+                Text('Produzidos: $producedCount de ${orderItem.quantity}'),
+                Text('Entregues/Retirados: $deliveredCount de ${orderItem.quantity}'),
+                if (inStockCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4.0),
+                    child: Text(
+                      'Disponível p/ Entrega/Retirada: $inStockCount',
+                      style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+              ],
+            ),
             trailing: Text(
-              currencyFormatter.format(item.totalPrice),
+              currencyFormatter.format(orderItem.totalPrice),
               style: const TextStyle(fontWeight: FontWeight.bold)
             ),
-            isThreeLine: true,
           );
         })
       ]
@@ -880,6 +965,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
   
   Widget _buildActionButtons() {
+    final bool hasItemsInStock = _stockItemsForOrder?.any((item) => item.status == StockItemStatus.emEstoque) ?? false;
+
     final bool needsRefundConfirmation = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true &&
                                           _currentOrder.status != OrderStatus.finalizado &&
                                           _currentOrder.status != OrderStatus.cancelado;
@@ -899,13 +986,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (_currentOrder.status == OrderStatus.cotacao) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.check_circle), label: const Text('Converter em Pedido'), style: ElevatedButton.styleFrom(backgroundColor: Colors.orange, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _converterParaPedido));
     if (_currentOrder.status == OrderStatus.pedido && _currentOrder.paymentStatus == PaymentStatus.aguardandoSinal) return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento'), style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmInitialPayment));
     
-    if (_currentOrder.status == OrderStatus.emFabricacao || _currentOrder.status == OrderStatus.aguardandoEntrega) {
+    if ((_currentOrder.status == OrderStatus.emFabricacao || _currentOrder.status == OrderStatus.aguardandoEntrega) && hasItemsInStock) {
       List<Widget> buttons = [];
       
-      if (_currentOrder.status == OrderStatus.aguardandoEntrega) {
-        buttons.add(SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.storefront), label: const Text('Registrar Retirada na Empresa'), style: ElevatedButton.styleFrom(backgroundColor: Colors.brown, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _registerPickup)));
-        buttons.add(const SizedBox(height: 10));
-      }
+      buttons.add(SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.storefront), label: const Text('Registrar Retirada na Empresa'), style: ElevatedButton.styleFrom(backgroundColor: Colors.brown, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _registerPickup)));
+      buttons.add(const SizedBox(height: 10));
 
       buttons.add(SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.local_shipping_outlined), label: const Text('Registrar Saída para Entrega'), style: ElevatedButton.styleFrom(backgroundColor: Colors.indigo, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _showDeliveryDialog)));
       

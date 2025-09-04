@@ -1,20 +1,18 @@
 // lib/widgets/pickup_dialog.dart
 
-import 'package:collection/collection.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/order_model.dart';
-import '../models/stock_item_model.dart';
-import '../models/delivery_selection_item_model.dart'; // Importa a classe do novo arquivo
+import '../models/delivery_selection_item_model.dart';
 
 class PickupDialog extends StatefulWidget {
   final Order order;
-  final List<StockItem> itemsReadyForPickup;
+  final List<DeliverySelectionItem> itemsReadyForPickup; // TIPO CORRIGIDO AQUI
 
   const PickupDialog({
     super.key,
     required this.order,
-    required this.itemsReadyForPickup,
+    required this.itemsReadyForPickup, // TIPO CORRIGIDO AQUI
   });
 
   @override
@@ -23,31 +21,15 @@ class PickupDialog extends StatefulWidget {
 
 class _PickupDialogState extends State<PickupDialog> {
   final _formKey = GlobalKey<FormState>();
+  final _pickupPersonNameController = TextEditingController();
+  final _vehiclePlateController = TextEditingController();
   late List<DeliverySelectionItem> _selectionItems;
 
   @override
   void initState() {
     super.initState();
-    _initializeSelectionItems();
-  }
-
-  void _initializeSelectionItems() {
-    final groupedByProduct = groupBy(
-      widget.itemsReadyForPickup,
-      (StockItem item) => '${item.productId}-${item.logoType}',
-    );
-
-    _selectionItems = groupedByProduct.entries.map((entry) {
-      final firstItem = entry.value.first;
-      return DeliverySelectionItem(
-        productId: firstItem.productId,
-        productName: firstItem.productName,
-        sku: firstItem.sku,
-        logoType: firstItem.logoType,
-        maxQuantity: entry.value.length,
-        quantityToDeliver: entry.value.length,
-      );
-    }).toList();
+    // Apenas copiamos a lista que já vem pronta
+    _selectionItems = List.from(widget.itemsReadyForPickup);
   }
 
   void _submit() {
@@ -64,7 +46,11 @@ class _PickupDialogState extends State<PickupDialog> {
         return;
       }
 
-      Navigator.of(context).pop({'selectedItems': itemsToReturn});
+      Navigator.of(context).pop({
+        'selectedItems': itemsToReturn,
+        'pickupPersonName': _pickupPersonNameController.text,
+        'vehiclePlate': _vehiclePlateController.text,
+      });
     }
   }
 
@@ -81,8 +67,19 @@ class _PickupDialogState extends State<PickupDialog> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Selecione a quantidade de cada item que está sendo retirado:'),
+                TextFormField(
+                  controller: _pickupPersonNameController,
+                  decoration: const InputDecoration(labelText: 'Nome de quem está retirando'),
+                  validator: (value) => value == null || value.isEmpty ? 'Campo obrigatório' : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: _vehiclePlateController,
+                  decoration: const InputDecoration(labelText: 'Placa do Veículo (Opcional)'),
+                ),
                 const Divider(height: 24),
+                const Text('Selecione a quantidade de cada item que está sendo retirado:'),
+                const SizedBox(height: 16),
                 ..._selectionItems.map((item) {
                   return Padding(
                     padding: const EdgeInsets.only(bottom: 16.0),
@@ -94,7 +91,7 @@ class _PickupDialogState extends State<PickupDialog> {
                             children: [
                               Text(item.productName, style: const TextStyle(fontWeight: FontWeight.bold)),
                               Text('SKU: ${item.sku} | Logo: ${item.logoType}', style: Theme.of(context).textTheme.bodySmall),
-                              Text('Disponível: ${item.maxQuantity}', style: const TextStyle(color: Colors.green, fontSize: 12)),
+                              Text('Disponível p/ Retirada: ${item.maxQuantity}', style: const TextStyle(color: Colors.green, fontSize: 12)),
                             ],
                           ),
                         ),

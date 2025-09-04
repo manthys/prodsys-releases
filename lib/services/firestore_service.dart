@@ -30,6 +30,30 @@ class GroupedStockResult {
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
+  Future<int> resynchronizeAllOrderStatus() async {
+    debugPrint('Iniciando sincronização global de status de pedidos...');
+    int updatedCount = 0;
+    
+    final querySnapshot = await _db.collection('orders')
+        .where('status', whereNotIn: [OrderStatus.finalizado.name, OrderStatus.cancelado.name])
+        .get();
+
+    for (final doc in querySnapshot.docs) {
+      final order = Order.fromFirestore(doc.data(), doc.id);
+      debugPrint('Sincronizando pedido #${order.id?.substring(0,6)}...');
+      
+      try {
+        await checkIfOrderIsFullyCompleted(order.id!);
+        updatedCount++;
+      } catch (e) {
+        debugPrint('Erro ao sincronizar pedido ${order.id}: $e');
+      }
+    }
+    
+    debugPrint('Sincronização concluída. $updatedCount pedidos foram verificados/atualizados.');
+    return updatedCount;
+  }
+
   Stream<List<Order>> getOperationalOrdersStream() {
     final activeStatuses = [
       OrderStatus.cotacao.name,
@@ -53,7 +77,7 @@ class FirestoreService {
       OrderStatus.finalizado.name,
       OrderStatus.aguardandoEntrega.name,
       OrderStatus.aguardandoPagamentoFinal.name,
-      OrderStatus.cancelado.name, // Inclui cancelado para filtrar depois
+      OrderStatus.cancelado.name,
     ];
     
     Stream<List<Order>> ordersStream = _db
@@ -73,7 +97,6 @@ class FirestoreService {
     return Rx.combineLatest2(
       ordersStream, expensesStream,
       (List<Order> orders, List<Expense> expenses) {
-        // Filtra aqui para garantir que os status inválidos não prossigam
         final filteredOrders = orders.where((o) => validStatuses.contains(o.status.name)).toList();
         return {'orders': filteredOrders,'expenses': expenses,};
       },
@@ -112,9 +135,7 @@ class FirestoreService {
         },
         body: body,
       );
-      if (response.statusCode == 200) {
-        debugPrint('Cloud Function executada com sucesso!');
-      } else {
+      if (response.statusCode != 200) {
         throw Exception('Falha na Cloud Function. Status: ${response.statusCode}, Corpo: ${response.body}');
       }
     } catch (e) {
@@ -136,7 +157,7 @@ class FirestoreService {
     
     currentNotes = currentNotes.replaceAll(RegExp(r'\n\[SISTEMA\] Valor a devolver ao cliente: R\$\d+[\.,]\d{2}\.'), '');
     
-    String newNotes = currentNotes.trim() + '\n[SISTEMA] Devolução confirmada em $formattedDate.';
+    String newNotes = '${currentNotes.trim()}\n[SISTEMA] Devolução confirmada em $formattedDate.';
     
     await orderRef.update({'notes': newNotes});
 
@@ -270,9 +291,6 @@ class FirestoreService {
   }
   Future<void> deleteOrder(String orderId) => _db.collection('orders').doc(orderId).delete();
 
-  // =================================================================
-  // FUNÇÃO DE CANCELAMENTO CORRIGIDA
-  // =================================================================
   Future<void> handleOrderCancellation(String orderId) async {
     final batch = _db.batch();
     final stockItemsCollection = _db.collection('stock_items');
@@ -282,18 +300,16 @@ class FirestoreService {
     for (final doc in querySnapshot.docs) {
       final stockItem = StockItem.fromFirestore(doc.data(), doc.id);
       
-      // Se o item já foi produzido (está em estoque ou em trânsito), ele volta para o estoque geral.
       if (stockItem.status == StockItemStatus.emEstoque || stockItem.status == StockItemStatus.emTransito) {
         batch.update(doc.reference, {
           'orderId': null,
           'clientName': null,
           'deliveryDeadline': null,
           'deliveryId': null,
-          'status': StockItemStatus.emEstoque.name, // Garante que o status volte para "Em Estoque"
+          'status': StockItemStatus.emEstoque.name,
           'reallocatedFrom': 'Cancelado do Pedido #${orderId.substring(0, 6).toUpperCase()}',
         });
       } else { 
-        // Se ainda estava "Aguardando Produção", é simplesmente deletado.
         batch.delete(doc.reference);
       }
     }
@@ -439,24 +455,36 @@ class FirestoreService {
     });
   }
 
+  // ##### FUNÇÃO QUE ESTAVA FALTANDO #####
   Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
     final order = await getOrderById(orderId);
-    if (order == null || order.status == OrderStatus.finalizado) return;
+    if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado) return;
 
-    final totalItemsInOrder = order.items.fold<int>(0, (sum, item) => sum + item.quantity);
+    final allStockItemsForOrder = await getStockItemsForOrder(orderId);
+    
+    final deliveredStockItems = allStockItemsForOrder
+        .where((item) => item.status == StockItemStatus.entregue)
+        .toList();
 
-    if (totalItemsInOrder == 0) {
-      if (order.paymentStatus == PaymentStatus.pagoIntegralmente) {
-        await updateOrderStatus(orderId, OrderStatus.finalizado);
-      } else {
-        await updateOrderStatus(orderId, OrderStatus.aguardandoPagamentoFinal);
+    bool allItemsDelivered = true;
+    
+    if (order.items.isEmpty) {
+        allItemsDelivered = true;
+    } else {
+      for (final orderItem in order.items) {
+        final count = deliveredStockItems
+            .where((stockItem) =>
+                stockItem.productId == orderItem.productId &&
+                stockItem.logoType == orderItem.logoType)
+            .length;
+
+        if (count < orderItem.quantity) {
+          allItemsDelivered = false;
+          break;
+        }
       }
-      return;
     }
 
-    final deliveredItemsSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).where('status', isEqualTo: StockItemStatus.entregue.name).get();
-    
-    final allItemsDelivered = deliveredItemsSnapshot.docs.length >= totalItemsInOrder;
     final isFullyPaid = order.paymentStatus == PaymentStatus.pagoIntegralmente;
 
     if (allItemsDelivered) {
@@ -465,6 +493,13 @@ class FirestoreService {
       } else {
         await updateOrderStatus(orderId, OrderStatus.aguardandoPagamentoFinal);
       }
+    } else {
+       if (order.status == OrderStatus.emFabricacao) {
+         final hasPendingProduction = allStockItemsForOrder.any((item) => item.status == StockItemStatus.aguardandoProducao);
+         if (!hasPendingProduction) {
+           await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
+         }
+       }
     }
   }
 
@@ -677,7 +712,7 @@ class FirestoreService {
     return snapshot.docs.map((doc) => StockItem.fromFirestore(doc.data(), doc.id)).toList();
   }
 
-  Future<void> createPickupAndUpdateStock(Delivery delivery, List<StockItem> stockItemsToUpdate) async {
+  Future<String> createPickupAndUpdateStock(Delivery delivery, List<StockItem> stockItemsToUpdate) async {
     final batch = _db.batch();
     
     final deliveryData = delivery.toJson();
@@ -693,6 +728,7 @@ class FirestoreService {
     
     await batch.commit();
     await checkIfOrderIsFullyCompleted(delivery.orderId);
+    return deliveryRef.id;
   }
 
   Future<int> synchronizeLogoType() async {
@@ -721,19 +757,14 @@ class FirestoreService {
     return updatedCount;
   }
 
-  // =================================================================
-  // NOVA FUNÇÃO PARA CANCELAR ENTREGA
-  // =================================================================
   Future<void> cancelDelivery(String deliveryId) async {
     final batch = _db.batch();
     final deliveryRef = _db.collection('deliveries').doc(deliveryId);
 
-    // 1. Encontra os itens de estoque associados a esta entrega
     final stockItemsSnapshot = await _db.collection('stock_items')
         .where('deliveryId', isEqualTo: deliveryId)
         .get();
 
-    // 2. Para cada item, reverte o status para 'emEstoque' e limpa o deliveryId
     for (final doc in stockItemsSnapshot.docs) {
       batch.update(doc.reference, {
         'status': StockItemStatus.emEstoque.name,
@@ -741,9 +772,7 @@ class FirestoreService {
       });
     }
 
-    // 3. Deleta o registro da entrega
     batch.delete(deliveryRef);
-
     await batch.commit();
   }
 }

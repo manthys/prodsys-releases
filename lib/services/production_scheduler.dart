@@ -31,108 +31,80 @@ class ProductionPlanItem {
 }
 
 class ProductionScheduler {
-
   Map<DateTime, List<ProductionPlanItem>> scheduleProduction({
     required List<StockItem> allPendingItems,
     required List<Mold> allMolds,
     required Map<String, Product> productCatalog,
+    DateTime? startDate,
   }) {
-    final demandByGroup = <String, List<StockItem>>{};
+    final Map<DateTime, List<ProductionPlanItem>> plan = {};
+    if (allPendingItems.isEmpty) return plan;
+
+    allPendingItems.sort((a, b) => 
+      (a.deliveryDeadline?.toDate() ?? DateTime(2099)).compareTo(b.deliveryDeadline?.toDate() ?? DateTime(2099))
+    );
+    
+    final Map<String, List<StockItem>> groupedByProduct = {};
     for (var item in allPendingItems) {
-      final key = '${item.orderId}_${item.productId}_${item.logoType}';
-      demandByGroup.putIfAbsent(key, () => []).add(item);
+      final key = '${item.productId}-${item.logoType}';
+      groupedByProduct.putIfAbsent(key, () => []).add(item);
     }
 
-    var demandList = demandByGroup.entries.map((entry) {
-      final firstItem = entry.value.first;
-      return {
-        'key': entry.key,
-        'items': entry.value,
-        'remaining': entry.value.length,
-        'creationDate': firstItem.creationDate.toDate(),
-        'deadline': firstItem.deliveryDeadline?.toDate() ?? DateTime.now().add(const Duration(days: 90)),
-      };
-    }).toList();
-
-    demandList.sort((a, b) {
-      int dateComp = (a['creationDate'] as DateTime).compareTo(b['creationDate'] as DateTime);
-      if (dateComp != 0) return dateComp;
-      return (a['deadline'] as DateTime).compareTo(b['deadline'] as DateTime);
-    });
+    final sortedGroupEntries = groupedByProduct.entries.toList()
+      ..sort((a, b) {
+        final deadlineA = a.value.first.deliveryDeadline?.toDate() ?? DateTime(2099);
+        final deadlineB = b.value.first.deliveryDeadline?.toDate() ?? DateTime(2099);
+        return deadlineA.compareTo(deadlineB);
+      });
     
-    final Map<DateTime, List<ProductionPlanItem>> fullProductionPlan = {};
-    DateTime currentDate = DateTime.now().subtract(const Duration(days: 1));
+    final Map<String, int> moldCapacity = {for (var mold in allMolds) mold.name: mold.quantityAvailable};
+    final Map<String, DateTime> moldNextAvailableDate = {
+      for (var mold in allMolds) 
+        mold.name: _getNextWorkday((startDate ?? DateTime.now()).subtract(const Duration(days: 1)))
+    };
 
-    while (demandList.any((d) => (d['remaining'] as int) > 0)) {
-      currentDate = _getNextWorkday(currentDate);
+    for (var entry in sortedGroupEntries) {
+      List<StockItem> itemsToSchedule = List.from(entry.value);
+      int totalPendingForGroup = itemsToSchedule.length;
 
-      final dailyMoldCapacity = {for (var mold in allMolds) mold.name: mold.quantityAvailable};
-      
-      for (var demandGroup in demandList) {
-        if ((demandGroup['remaining'] as int) == 0) continue;
-
-        final firstItem = (demandGroup['items'] as List<StockItem>).first;
+      while (itemsToSchedule.isNotEmpty) {
+        final firstItem = itemsToSchedule.first;
         final product = productCatalog[firstItem.productId];
-        if (product == null) continue;
+        if (product == null) {
+          itemsToSchedule.removeAt(0);
+          continue;
+        }
 
         final moldType = product.moldType;
-        int capacityForToday = dailyMoldCapacity[moldType] ?? 0;
-        
-        if (capacityForToday > 0) {
-          final quantityToProduce = (demandGroup['remaining'] as int) < capacityForToday 
-                                      ? (demandGroup['remaining'] as int)
-                                      : capacityForToday;
-          
-          final int alreadyTakenCount = (demandGroup['items'] as List<StockItem>).length - (demandGroup['remaining'] as int);
-          final List<StockItem> itemsForThisRun = (demandGroup['items'] as List<StockItem>)
-              .skip(alreadyTakenCount)
-              .take(quantityToProduce)
-              .toList();
-
-          if (itemsForThisRun.isNotEmpty) {
-            final planItem = ProductionPlanItem(
-              productId: firstItem.productId,
-              productName: firstItem.productName,
-              sku: firstItem.sku,
-              logoType: firstItem.logoType,
-              clientName: firstItem.clientName ?? 'N/A',
-              orderId: firstItem.orderId?.substring(0,6).toUpperCase() ?? 'N/A',
-              deliveryDeadline: demandGroup['deadline'] as DateTime,
-              totalPendingForGroup: (demandGroup['items'] as List<StockItem>).length,
-              quantityToProduce: quantityToProduce,
-              sourceItems: itemsForThisRun,
-            );
-
-            fullProductionPlan.putIfAbsent(currentDate, () => []).add(planItem);
-
-            demandGroup['remaining'] = (demandGroup['remaining'] as int) - quantityToProduce;
-            dailyMoldCapacity[moldType] = (dailyMoldCapacity[moldType] ?? 0) - quantityToProduce;
-          }
+        if (moldType.isEmpty || !moldCapacity.containsKey(moldType)) {
+          itemsToSchedule.removeAt(0);
+          continue;
         }
-      }
-      
-      if (currentDate.isAfter(DateTime.now().add(const Duration(days: 365)))) {
-        print("AVISO: Agendamento interrompido após 1 ano de planejamento.");
-        break;
-      }
-    }
-    
-    // =================================================================
-    // PRINT 2: ADICIONADO AQUI
-    // =================================================================
-    print('\n--- DEBUG: RESULTADO DO AGENDADOR ---');
-    if (fullProductionPlan.isEmpty) {
-      print('O plano gerado está VAZIO.');
-    } else {
-      print('O plano gerado contém as seguintes datas:');
-      fullProductionPlan.forEach((date, items) {
-        print('  - Dia: $date, Itens Agendados: ${items.length}');
-      });
-    }
-    print('-------------------------------------\n');
-    // =================================================================
 
-    return fullProductionPlan;
+        DateTime productionDate = moldNextAvailableDate[moldType]!;
+        int capacity = moldCapacity[moldType] ?? 1;
+        int quantityForThisRun = itemsToSchedule.length > capacity ? capacity : itemsToSchedule.length;
+        
+        final itemsForThisRun = itemsToSchedule.sublist(0, quantityForThisRun);
+
+        plan.putIfAbsent(productionDate, () => []).add(ProductionPlanItem(
+          productId: firstItem.productId,
+          productName: firstItem.productName,
+          sku: firstItem.sku,
+          logoType: firstItem.logoType,
+          quantityToProduce: quantityForThisRun,
+          clientName: firstItem.clientName ?? 'Estoque',
+          orderId: firstItem.orderId?.substring(0,6).toUpperCase() ?? 'N/A',
+          deliveryDeadline: firstItem.deliveryDeadline?.toDate() ?? DateTime(2099),
+          totalPendingForGroup: totalPendingForGroup,
+          sourceItems: itemsForThisRun,
+        ));
+        
+        itemsToSchedule.removeRange(0, quantityForThisRun);
+        moldNextAvailableDate[moldType] = _getNextWorkday(productionDate);
+      }
+    }
+    return plan;
   }
 
   DateTime _getNextWorkday(DateTime date) {

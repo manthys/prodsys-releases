@@ -2,17 +2,16 @@
 
 import 'package:flutter/material.dart';
 import '../models/order_model.dart';
-import '../models/stock_item_model.dart';
-import '../models/delivery_selection_item_model.dart'; // Importa a classe do novo arquivo
+import '../models/delivery_selection_item_model.dart';
 
 class DeliveryDialog extends StatefulWidget {
   final Order order;
-  final List<StockItem> itemsReadyForDelivery;
+  final List<DeliverySelectionItem> itemsReadyForDelivery; // TIPO CORRIGIDO AQUI
 
   const DeliveryDialog({
     super.key,
     required this.order,
-    required this.itemsReadyForDelivery,
+    required this.itemsReadyForDelivery, // TIPO CORRIGIDO AQUI
   });
 
   @override
@@ -29,26 +28,8 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
   @override
   void initState() {
     super.initState();
-    _initializeSelectionItems();
-  }
-
-  void _initializeSelectionItems() {
-    final groupedByProduct = <String, int>{};
-    for (var stockItem in widget.itemsReadyForDelivery) {
-      final key = '${stockItem.productId}|${stockItem.sku}|${stockItem.productName}';
-      groupedByProduct.update(key, (value) => value + 1, ifAbsent: () => 1);
-    }
-
-    _selectionItems = groupedByProduct.entries.map((entry) {
-      final parts = entry.key.split('|');
-      return DeliverySelectionItem(
-        productId: parts[0],
-        sku: parts[1],
-        productName: parts[2],
-        maxQuantity: entry.value,
-        quantityToDeliver: entry.value,
-      );
-    }).toList();
+    // Agora apenas copiamos a lista, não precisamos mais inicializar/converter
+    _selectionItems = List.from(widget.itemsReadyForDelivery);
   }
 
   void _submit() {
@@ -110,7 +91,7 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(item.productName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                Text('SKU: ${item.sku} | Em estoque: ${item.maxQuantity}'),
+                                Text('SKU: ${item.sku} | Disponível: ${item.maxQuantity}'),
                               ],
                             ),
                           ),
@@ -120,7 +101,7 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
                               initialValue: item.quantityToDeliver.toString(),
                               keyboardType: TextInputType.number,
                               textAlign: TextAlign.center,
-                              decoration: const InputDecoration(labelText: 'Qtd.'),
+                              decoration: const InputDecoration(labelText: 'Qtd'),
                               onChanged: (value) {
                                 final qty = int.tryParse(value) ?? 0;
                                 item.quantityToDeliver = qty;

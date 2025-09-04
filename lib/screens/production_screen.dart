@@ -29,11 +29,23 @@ class _ProductionScreenState extends State<ProductionScreen> {
   final ProductionScheduler _scheduler = ProductionScheduler();
   late DateTime _selectedDate;
   Order? _selectedOrderFilter;
+  final TextEditingController _searchController = TextEditingController();
+  String _searchTerm = '';
+
 
   @override
   void initState() {
     super.initState();
     _setInitialDate();
+    _searchController.addListener(() {
+      if(mounted) setState(() => _searchTerm = _searchController.text);
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
   
   void _setInitialDate() {
@@ -68,6 +80,7 @@ class _ProductionScreenState extends State<ProductionScreen> {
       setState(() {
         _selectedDate = DateTime(picked.year, picked.month, picked.day);
         _selectedOrderFilter = null;
+        _searchController.clear();
       });
     }
   }
@@ -106,6 +119,7 @@ class _ProductionScreenState extends State<ProductionScreen> {
     if (picked != null) {
       setState(() {
         _selectedOrderFilter = picked;
+        _searchController.clear();
       });
     }
   }
@@ -126,7 +140,6 @@ class _ProductionScreenState extends State<ProductionScreen> {
                   Text('A forma "${opportunity.mold.name}" está ociosa. Qual produto você deseja fabricar?', style: Theme.of(context).textTheme.bodyLarge),
                   const Divider(height: 24),
                   ...opportunity.availableProducts.map((product) {
-                    // ##### ALTERAÇÃO: Lógica para o label do tipo de logo #####
                     final String logoTypeLabel = product.sku.toLowerCase().contains('cleiton premoldados') ? 'Logo da Empresa' : 'Nenhum';
                     return ListTile(
                       title: Text(product.name),
@@ -144,9 +157,7 @@ class _ProductionScreenState extends State<ProductionScreen> {
     );
 
     if (selectedProduct != null) {
-      // ##### ALTERAÇÃO INICIA AQUI: Padroniza para "Nenhum" #####
       final String logoTypeForDb = selectedProduct.sku.toLowerCase().contains('cleiton premoldados') ? 'Própria' : 'Nenhum';
-      // ##### ALTERAÇÃO TERMINA AQUI #####
       final tempPlanItem = ProductionPlanItem(
         productId: selectedProduct.id!,
         productName: selectedProduct.name,
@@ -225,9 +236,11 @@ class _ProductionScreenState extends State<ProductionScreen> {
   @override
   Widget build(BuildContext context) {
     final formattedDate = DateFormat('dd/MM/yyyy, EEEE', 'pt_BR').format(_selectedDate);
-    final title = _selectedOrderFilter == null
-        ? 'Produção de $formattedDate'
-        : 'Produção para Pedido #${_selectedOrderFilter!.id!.substring(0, 6).toUpperCase()}';
+    final title = _searchTerm.isNotEmpty
+      ? 'Buscando por "$_searchTerm"'
+      : _selectedOrderFilter == null
+          ? 'Produção de $formattedDate'
+          : 'Produção para Pedido #${_selectedOrderFilter!.id!.substring(0, 6).toUpperCase()}';
 
     return Scaffold(
       appBar: AppBar(
@@ -258,6 +271,31 @@ class _ProductionScreenState extends State<ProductionScreen> {
             onPressed: () => _selectDate(context),
           ),
         ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(60.0),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            child: TextField(
+              controller: _searchController,
+              decoration: InputDecoration(
+                hintText: 'Buscar produto em toda a produção...',
+                prefixIcon: const Icon(Icons.search),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(8),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                contentPadding: EdgeInsets.zero,
+                suffixIcon: _searchTerm.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () => _searchController.clear(),
+                      )
+                    : null,
+              ),
+            ),
+          ),
+        ),
       ),
       body: StreamBuilder<Map<String, dynamic>>(
         stream: _firestoreService.getDataForProductionPlanStream(),
@@ -276,74 +314,100 @@ class _ProductionScreenState extends State<ProductionScreen> {
           final List<StockItem> allPendingItems = snapshot.data!['pendingItems'];
           final Map<String, Product> productCatalog = snapshot.data!['products'];
           
-          List<StockItem> itemsToSchedule = allPendingItems;
-          if (_selectedOrderFilter != null) {
-            itemsToSchedule = allPendingItems.where((item) => item.orderId == _selectedOrderFilter!.id).toList();
-          }
-
           final fullPlan = _scheduler.scheduleProduction(
-            allPendingItems: itemsToSchedule,
+            allPendingItems: allPendingItems,
             allMolds: allMolds,
             productCatalog: productCatalog,
           );
 
-          List<StockOpportunity> stockOpportunities = [];
-          if (_selectedOrderFilter == null) {
-            final dateToCheck = _selectedDate;
-            final usedMoldTypes = (fullPlan[dateToCheck] ?? [])
-                .map((planItem) => productCatalog[planItem.productId]?.moldType)
-                .where((moldType) => moldType != null)
-                .toSet();
-            
-            final idleMolds = allMolds.where((mold) => !usedMoldTypes.contains(mold.name)).toList();
-
-            for (final mold in idleMolds) {
-              final productsForStock = productCatalog.values.where((p) {
-                if (p.moldType != mold.name) return false;
-                final skuLower = p.sku.toLowerCase();
-                return skuLower.contains('cleiton premoldados') || !skuLower.contains('manayra');
-              }).toList();
-
-              if (productsForStock.isNotEmpty) {
-                stockOpportunities.add(StockOpportunity(mold: mold, availableProducts: productsForStock));
-              }
-            }
-          }
-
-          final itemsGroupedByDate = groupBy(
-            _selectedOrderFilter != null ? fullPlan.entries.expand((entry) => entry.value.map((item) => MapEntry(entry.key, item))).toList() : <MapEntry<DateTime, ProductionPlanItem>>[],
-            (entry) => entry.key
-          );
-          final sortedDates = itemsGroupedByDate.keys.toList()..sort();
-
           List<Widget> listWidgets = [];
-          if (_selectedOrderFilter != null) {
+          
+          if (_searchTerm.isNotEmpty) {
+            final allPlannedItems = fullPlan.entries
+                .expand((entry) => entry.value.map((item) => MapEntry(entry.key, item)))
+                .toList();
+
+            final searchResults = allPlannedItems.where((entry) {
+              final item = entry.value;
+              final query = _searchTerm.toLowerCase();
+              return item.productName.toLowerCase().contains(query) ||
+                     item.sku.toLowerCase().contains(query);
+            }).toList();
+
+            final groupedSearchResults = groupBy(searchResults, (entry) => entry.key);
+            final sortedDates = groupedSearchResults.keys.toList()..sort();
+
             for (var date in sortedDates) {
-              listWidgets.add(
+               listWidgets.add(
                 Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16.0),
+                  padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 8.0),
                   child: Text(
                     DateFormat('dd/MM/yyyy, EEEE', 'pt_BR').format(date),
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                   ),
                 )
               );
-              listWidgets.addAll(itemsGroupedByDate[date]!.map((entry) => _buildProductionCard(entry.value)));
+              listWidgets.addAll(groupedSearchResults[date]!.map((entry) => _buildProductionCard(entry.value)));
             }
+          } else if (_selectedOrderFilter != null) {
+              final Map<DateTime, List<ProductionPlanItem>> planToShow = {};
+              fullPlan.forEach((date, items) {
+                final filteredItems = items.where((item) => item.sourceItems.first.orderId == _selectedOrderFilter!.id).toList();
+                if (filteredItems.isNotEmpty) {
+                  planToShow[date] = filteredItems;
+                }
+              });
+
+              final sortedDates = planToShow.keys.toList()..sort();
+              for (var date in sortedDates) {
+                listWidgets.add(
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 8.0),
+                    child: Text(
+                      DateFormat('dd/MM/yyyy, EEEE', 'pt_BR').format(date),
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+                    ),
+                  )
+                );
+                listWidgets.addAll(planToShow[date]!.map(_buildProductionCard));
+              }
           } else {
-            final productionForDay = fullPlan[_selectedDate] ?? [];
-            listWidgets.addAll(productionForDay.map((item) => _buildProductionCard(item)));
-          }
-          
-          if (stockOpportunities.isNotEmpty) {
-            listWidgets.add(const _StockOpportunityHeader());
-            listWidgets.addAll(stockOpportunities.map((op) => _buildStockOpportunityCard(op)));
+              final productionForDay = fullPlan[_selectedDate] ?? [];
+              listWidgets.addAll(productionForDay.map(_buildProductionCard));
+
+              List<StockOpportunity> stockOpportunities = [];
+              final dateToCheck = _selectedDate;
+              final usedMoldTypes = (fullPlan[dateToCheck] ?? [])
+                  .map((planItem) => productCatalog[planItem.productId]?.moldType)
+                  .where((moldType) => moldType != null)
+                  .toSet();
+              
+              final idleMolds = allMolds.where((mold) => !usedMoldTypes.contains(mold.name)).toList();
+
+              for (final mold in idleMolds) {
+                final productsForStock = productCatalog.values.where((p) {
+                  if (p.moldType != mold.name) return false;
+                  final skuLower = p.sku.toLowerCase();
+                  return skuLower.contains('cleiton premoldados') || !skuLower.contains('manayra');
+                }).toList();
+
+                if (productsForStock.isNotEmpty) {
+                  stockOpportunities.add(StockOpportunity(mold: mold, availableProducts: productsForStock));
+                }
+              }
+
+              if (stockOpportunities.isNotEmpty) {
+                listWidgets.add(const _StockOpportunityHeader());
+                listWidgets.addAll(stockOpportunities.map((op) => _buildStockOpportunityCard(op)));
+              }
           }
 
           if (listWidgets.isEmpty) {
-            final message = _selectedOrderFilter != null
-              ? 'Nenhuma produção encontrada para este pedido.'
-              : 'Nenhuma produção agendada ou oportunidade de estoque para ${DateFormat('dd/MM/yyyy').format(_selectedDate)}.';
+            final message = _searchTerm.isNotEmpty 
+              ? 'Nenhum item de produção encontrado para "$_searchTerm".'
+              : _selectedOrderFilter != null
+                  ? 'Nenhuma produção encontrada para este pedido.'
+                  : 'Nenhuma produção agendada para ${DateFormat('dd/MM/yyyy').format(_selectedDate)}.';
             return Center(child: Text(message, style: Theme.of(context).textTheme.titleMedium, textAlign: TextAlign.center));
           }
 

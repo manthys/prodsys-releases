@@ -48,13 +48,13 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     super.dispose();
   }
   
-  Future<void> _runLogoMigration() async {
+  Future<void> _runGlobalSync() async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Sincronizar Dados Antigos?'),
+        title: const Text('Sincronizar Pedidos?'),
         content: const Text(
-            'Isso irá corrigir os itens de estoque antigos de "Logo em Branco" para "Logo Nenhum".\n\nEsta operação deve ser executada apenas uma vez. Deseja continuar?'),
+            'Isso irá verificar todos os pedidos em andamento, recontar os itens entregues e corrigir o status automaticamente.\n\nPode levar alguns segundos. Deseja continuar?'),
         actions: [
           TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
           ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Sim, Sincronizar')),
@@ -66,10 +66,10 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
 
     setState(() => _isSyncing = true);
     try {
-      final count = await firestoreService.synchronizeLogoType();
+      final count = await firestoreService.resynchronizeAllOrderStatus();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$count itens foram sincronizados com sucesso!'), backgroundColor: Colors.green),
+        SnackBar(content: Text('$count pedidos foram verificados e/ou atualizados com sucesso!'), backgroundColor: Colors.green),
       );
     } catch (e) {
       if (!mounted) return;
@@ -142,16 +142,17 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
           ],
         ),
         actions: [
+          // ##### BOTÃO DE SINCRONIZAÇÃO MOVIDO PARA CÁ #####
           if (_isSyncing)
             const Padding(
               padding: EdgeInsets.all(16.0),
-              child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3,)),
+              child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3)),
             )
           else
             IconButton(
-              icon: const Icon(Icons.sync_problem),
-              tooltip: 'Sincronizar Tipos de Logo Antigos',
-              onPressed: _runLogoMigration,
+              icon: const Icon(Icons.sync),
+              tooltip: 'Sincronizar Status de Pedidos Ativos',
+              onPressed: _runGlobalSync,
             ),
         ],
         bottom: PreferredSize(
@@ -226,6 +227,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
           ),
         ],
       ),
+      // BOTÃO FLUTUANTE DE SINCRONIZAÇÃO FOI REMOVIDO DAQUI
     );
   }
 
@@ -259,7 +261,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
             order.status != OrderStatus.finalizado &&
             order.status != OrderStatus.cancelado;
 
-        // <<< LÓGICA MODIFICADA >>>
         String paymentInfo = '';
         if (isArchived && order.status == OrderStatus.finalizado && order.paymentDistributions.isNotEmpty) {
           final recipients = order.paymentDistributions.map((d) => d.recipient).toSet().join(', ');
@@ -287,7 +288,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
               children: [
                 Text(
                   'Data: ${DateFormat('dd/MM/yyyy').format(order.creationDate.toDate())}\n'
-                  'Status: ${_getStatusName(order.status)}$paymentInfo', // << AQUI
+                  'Status: ${_getStatusName(order.status)}$paymentInfo',
                 ),
                 if (needsRefund)
                   Padding(
