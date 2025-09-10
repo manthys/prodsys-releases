@@ -165,6 +165,30 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       return selectionItems;
   }
 
+  // ##### NOVA PROPRIEDADE PARA VERIFICAR SE TUDO FOI ENTREGUE #####
+  bool get _areAllItemsDelivered {
+    if (_currentOrder.items.isEmpty) return true;
+    if (_deliveriesForOrder == null) return false;
+
+    for (final orderItem in _currentOrder.items) {
+      int deliveredCount = 0;
+      for (final delivery in _deliveriesForOrder!) {
+        for (final deliveryItem in delivery.items) {
+          final orderItemRef = _currentOrder.items.firstWhereOrNull((oi) => oi.sku == deliveryItem.sku && oi.productId == deliveryItem.productId);
+          final logoType = orderItemRef?.logoType ?? 'Nenhum';
+          if (deliveryItem.productId == orderItem.productId && logoType == orderItem.logoType) {
+            deliveredCount += deliveryItem.quantity;
+          }
+        }
+      }
+      if (deliveredCount < orderItem.quantity) {
+        return false;
+      }
+    }
+    return true;
+  }
+  
+  // O resto das funções até o `build` permanece o mesmo...
   void _generateOrderPdf() async {
     setState(() => _isGeneratingPdf = true);
     try {
@@ -662,7 +686,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   
   @override
   Widget build(BuildContext context) {
-    // ##### LÓGICA DE VISIBILIDADE DOS BOTÕES ATUALIZADA #####
     final bool isAdm = _currentUserRole == 'admin';
 
     final bool canBeEdited = 
@@ -680,7 +703,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                                 _currentOrder.status != OrderStatus.pedido &&
                                 _currentOrder.status != OrderStatus.cancelado;
     
-    final bool needsRefund = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true;
+    final bool needsRefund = _currentOrder.notes?.contains('[SISTEMA] Valor a devolver ao cliente:') ?? false;
     String? refundAmountString;
     if (needsRefund) {
       final regex = RegExp(r'Valor a devolver ao cliente: R\$(\d+[\.,]\d{2})');
@@ -732,31 +755,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, 
               children: [
-                _buildClientInfoSection(needsRefund: needsRefund),
-                if (needsRefund)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 16.0),
-                    child: Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.orange.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.orange.shade200)
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              'Atenção: Este pedido requer o processamento de um reembolso de ${refundAmountString ?? "valor não especificado"}.',
-                              style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+                _buildClientInfoSection(needsRefund: needsRefund, refundAmountString: refundAmountString),
                 const SizedBox(height: 24), 
                 _buildItemsSection(),
                 const Divider(), 
@@ -774,45 +773,72 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
   
-  Widget _buildClientInfoSection({required bool needsRefund}) {
+  Widget _buildClientInfoSection({required bool needsRefund, String? refundAmountString}) {
     final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
     final dateToShow = _recalculatedDeliveryDate ?? _currentOrder.deliveryDate?.toDate();
     final deliveryDateFormatted = dateToShow != null 
         ? DateFormat('dd/MM/yyyy').format(dateToShow)
         : 'A definir';
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('Cliente: ${_currentOrder.clientName}', style: Theme.of(context).textTheme.titleLarge), 
-      const SizedBox(height: 8), 
-      Text('Data do Pedido: ${dateFormatter.format(_currentOrder.creationDate.toDate())}'),
-      Row(
-        children: [
-          Text('Previsão de Entrega: $deliveryDateFormatted', style: const TextStyle(fontWeight: FontWeight.bold)),
-          if (_isRecalculatingDate) ...[
-            const SizedBox(width: 8),
-            const SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2)),
-          ]
-        ],
-      ),
-      Text('Criado por: ${_currentOrder.createdByUserName}'), 
-      const SizedBox(height: 8), 
-      Row(children: [
-        Text('Status: ', style: Theme.of(context).textTheme.bodyLarge), 
-        Chip(
-          label: Text(_getStatusName(_currentOrder.status), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), 
-          backgroundColor: _getStatusColor(_currentOrder.status), 
-          padding: const EdgeInsets.symmetric(horizontal: 8)
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start, 
+      children: [
+        Text('Cliente: ${_currentOrder.clientName}', style: Theme.of(context).textTheme.titleLarge), 
+        const SizedBox(height: 8), 
+        Text('Data do Pedido: ${dateFormatter.format(_currentOrder.creationDate.toDate())}'),
+        Row(
+          children: [
+            Text('Previsão de Entrega: $deliveryDateFormatted', style: const TextStyle(fontWeight: FontWeight.bold)),
+            if (_isRecalculatingDate) ...[
+              const SizedBox(width: 8),
+              const SizedBox(height: 12, width: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+            ]
+          ],
         ),
-        if(needsRefund) ...[
-          const SizedBox(width: 8),
+        Text('Criado por: ${_currentOrder.createdByUserName}'), 
+        const SizedBox(height: 8), 
+        Row(children: [
+          Text('Status: ', style: Theme.of(context).textTheme.bodyLarge), 
           Chip(
-            label: const Text('Reembolso Pendente', style: TextStyle(fontWeight: FontWeight.bold)),
-            backgroundColor: Colors.orange.shade100,
-            side: BorderSide(color: Colors.orange.shade300),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
+            label: Text(_getStatusName(_currentOrder.status), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)), 
+            backgroundColor: _getStatusColor(_currentOrder.status), 
+            padding: const EdgeInsets.symmetric(horizontal: 8)
           ),
-        ]
-      ])
-    ]);
+          if(needsRefund) ...[
+            const SizedBox(width: 8),
+            Chip(
+              label: const Text('Reembolso Pendente'),
+              backgroundColor: Colors.orange.shade100,
+              side: BorderSide(color: Colors.orange.shade300),
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+          ]
+        ]),
+        if (needsRefund)
+          Padding(
+            padding: const EdgeInsets.only(top: 16.0),
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200)
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'Atenção: Este pedido requer o processamento de um reembolso de ${refundAmountString ?? "valor não especificado"}.',
+                      style: TextStyle(color: Colors.orange.shade900, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ]
+    );
   }
 
   Widget _buildItemsSection() {
@@ -984,12 +1010,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   
   Widget _buildActionButtons() {
     final bool hasItemsInStock = _stockItemsForOrder?.any((item) => item.status == StockItemStatus.emEstoque) ?? false;
+    final bool needsRefund = _currentOrder.notes?.contains('[SISTEMA] Valor a devolver ao cliente:') ?? false;
 
-    final bool needsRefundConfirmation = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true &&
-                                          _currentOrder.status != OrderStatus.finalizado &&
-                                          _currentOrder.status != OrderStatus.cancelado;
-
-    if (needsRefundConfirmation) {
+    // ##### LÓGICA DO BOTÃO CORRIGIDA #####
+    if (needsRefund && _areAllItemsDelivered) {
       return SizedBox(
         width: double.infinity,
         child: ElevatedButton.icon(
@@ -1019,7 +1043,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       return Column(children: buttons);
     }
     
-    if (_currentOrder.status == OrderStatus.aguardandoPagamentoFinal) {
+    if (_currentOrder.status == OrderStatus.aguardandoPagamentoFinal && !needsRefund) {
         return SizedBox(width: double.infinity, child: ElevatedButton.icon(icon: const Icon(Icons.price_check), label: const Text('Confirmar Pagamento Final'), style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white, padding: const EdgeInsets.symmetric(vertical: 16)), onPressed: _confirmFinalPayment));
     }
 

@@ -21,6 +21,9 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
 
   final List<OrderStatus> _selectedStatusFilters = [];
   
+  // ##### NOVO FILTRO #####
+  bool _filterByPendingRefund = false;
+  
   bool _isSyncing = false;
 
   @override
@@ -35,6 +38,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
         setState(() {
           if (_tabController.indexIsChanging) {
             _selectedStatusFilters.clear();
+            _filterByPendingRefund = false; // Limpa o novo filtro também
           }
         });
       }
@@ -96,15 +100,35 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
-            if (_selectedStatusFilters.isNotEmpty)
+            if (_selectedStatusFilters.isNotEmpty || _filterByPendingRefund)
               Padding(
                 padding: const EdgeInsets.only(right: 8.0),
                 child: ActionChip(
                   avatar: const Icon(Icons.clear, size: 16),
-                  label: const Text('Limpar'),
-                  onPressed: () => setState(() => _selectedStatusFilters.clear()),
+                  label: const Text('Limpar Filtros'),
+                  onPressed: () => setState(() {
+                    _selectedStatusFilters.clear();
+                    _filterByPendingRefund = false;
+                  }),
                 ),
               ),
+            // ##### NOVO BOTÃO DE FILTRO #####
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4.0),
+              child: FilterChip(
+                label: const Text('Reemb. Pendente'),
+                avatar: Icon(Icons.request_quote_outlined, color: Colors.orange.shade800),
+                selectedColor: Colors.orange.shade100,
+                selected: _filterByPendingRefund,
+                onSelected: (selected) {
+                  setState(() {
+                    _filterByPendingRefund = selected;
+                    if(selected) _selectedStatusFilters.clear(); // Limpa outros filtros
+                  });
+                },
+              ),
+            ),
+            const VerticalDivider(),
             ...availableFilters.map((status) {
               final isSelected = _selectedStatusFilters.contains(status);
               return Padding(
@@ -116,6 +140,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                     setState(() {
                       if (selected) {
                         _selectedStatusFilters.add(status);
+                        _filterByPendingRefund = false; // Limpa o filtro de reembolso
                       } else {
                         _selectedStatusFilters.remove(status);
                       }
@@ -142,7 +167,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
           ],
         ),
         actions: [
-          // ##### BOTÃO DE SINCRONIZAÇÃO MOVIDO PARA CÁ #####
           if (_isSyncing)
             const Padding(
               padding: EdgeInsets.all(16.0),
@@ -183,7 +207,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
       ),
       body: Column(
         children: [
-          if (_tabController.index == 0) _buildStatusFilters(),
+          _buildStatusFilters(), // Movido para fora da TabBarView para aplicar a ambas
           Expanded(
             child: StreamBuilder<List<Order>>(
               stream: firestoreService.getOrdersStream(),
@@ -201,24 +225,27 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                 
                 final allOrders = snapshot.data!;
                 
-                final searchedOrders = allOrders.where((order) {
+                // ##### LÓGICA DE FILTRO ATUALIZADA #####
+                List<Order> filteredOrders = allOrders.where((order) {
                   final query = _searchTerm.toLowerCase();
                   final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? '';
                   return order.clientName.toLowerCase().contains(query) ||
                          orderIdShort.toLowerCase().contains(query);
                 }).toList();
 
-                final activeOrders = searchedOrders.where((o) => o.status != OrderStatus.finalizado && o.status != OrderStatus.cancelado).toList();
-                final archivedOrders = searchedOrders.where((o) => o.status == OrderStatus.finalizado || o.status == OrderStatus.cancelado).toList();
-
-                final filteredActive = _selectedStatusFilters.isEmpty
-                    ? activeOrders
-                    : activeOrders.where((order) => _selectedStatusFilters.contains(order.status)).toList();
+                if (_filterByPendingRefund) {
+                  filteredOrders = filteredOrders.where((order) => order.notes?.contains('[SISTEMA] Valor a devolver ao cliente:') ?? false).toList();
+                } else if (_selectedStatusFilters.isNotEmpty) {
+                  filteredOrders = filteredOrders.where((order) => _selectedStatusFilters.contains(order.status)).toList();
+                }
+                
+                final activeOrders = filteredOrders.where((o) => o.status != OrderStatus.finalizado && o.status != OrderStatus.cancelado).toList();
+                final archivedOrders = filteredOrders.where((o) => o.status == OrderStatus.finalizado || o.status == OrderStatus.cancelado).toList();
 
                 return TabBarView(
                   controller: _tabController,
                   children: [
-                    _buildOrdersList(filteredActive, isArchived: false),
+                    _buildOrdersList(activeOrders, isArchived: false),
                     _buildOrdersList(archivedOrders, isArchived: true),
                   ],
                 );
@@ -227,7 +254,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
           ),
         ],
       ),
-      // BOTÃO FLUTUANTE DE SINCRONIZAÇÃO FOI REMOVIDO DAQUI
     );
   }
 
@@ -235,15 +261,11 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
 
     if (orders.isEmpty) {
-      return Center(
+      return const Center(
         child: Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: EdgeInsets.all(16.0),
           child: Text(
-            _searchTerm.isNotEmpty
-                ? 'Nenhum pedido encontrado com os filtros aplicados.'
-                : isArchived
-                    ? 'Nenhum pedido finalizado ou cancelado.'
-                    : 'Nenhum pedido ativo no momento.',
+            'Nenhum pedido encontrado com os filtros aplicados.',
             textAlign: TextAlign.center,
           ),
         ),
@@ -251,15 +273,13 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     }
 
     return ListView.builder(
-      padding: const EdgeInsets.all(8.0),
+      padding: const EdgeInsets.only(left: 8.0, right: 8.0, top: 8.0, bottom: 80.0),
       itemCount: orders.length,
       itemBuilder: (context, index) {
         final order = orders[index];
         final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? 'N/A';
         final bool needsRefund =
-            order.notes?.contains('Valor a devolver ao cliente:') == true &&
-            order.status != OrderStatus.finalizado &&
-            order.status != OrderStatus.cancelado;
+            order.notes?.contains('[SISTEMA] Valor a devolver ao cliente:') == true;
 
         String paymentInfo = '';
         if (isArchived && order.status == OrderStatus.finalizado && order.paymentDistributions.isNotEmpty) {

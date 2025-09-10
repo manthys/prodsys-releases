@@ -31,33 +31,23 @@ class GroupedStockResult {
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  Future<int> resynchronizeAllOrderStatus() async {
-    debugPrint('Iniciando sincronização global de status de pedidos...');
-    int updatedCount = 0;
-    
-    final querySnapshot = await _db.collection('orders')
-        .where('status', whereNotIn: [OrderStatus.finalizado.name, OrderStatus.cancelado.name])
-        .get();
-
-    for (final doc in querySnapshot.docs) {
-      final order = Order.fromFirestore(doc.data(), doc.id);
-      debugPrint('Sincronizando pedido #${order.id?.substring(0,6)}...');
-      
-      try {
-        await checkIfOrderIsFullyCompleted(order.id!);
-        updatedCount++;
-      } catch (e) {
-        debugPrint('Erro ao sincronizar pedido ${order.id}: $e');
-      }
-    }
-    
-    debugPrint('Sincronização concluída. $updatedCount pedidos foram verificados/atualizados.');
-    return updatedCount;
-  }
-
+  // ##### ESTA É A FUNÇÃO PRINCIPAL QUE FOI CORRIGIDA #####
   Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
     final order = await getOrderById(orderId);
     if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado) return;
+    
+    // ----- NOVA VERIFICAÇÃO DE REEMBOLSO -----
+    bool needsRefund = order.amountPaid > order.finalAmount;
+    bool hasRefundNote = order.notes?.contains('[SISTEMA] Valor a devolver ao cliente:') ?? false;
+
+    if (needsRefund && !hasRefundNote) {
+        double refundAmount = order.amountPaid - order.finalAmount;
+        String newNotes = (order.notes ?? '') + '\n[SISTEMA] Valor a devolver ao cliente: R\$${refundAmount.toStringAsFixed(2)}.';
+        await _db.collection('orders').doc(orderId).update({'notes': newNotes});
+        // Recarrega o pedido para ter as notas atualizadas para o resto da função
+        await getOrderById(orderId); 
+    }
+    // ----- FIM DA NOVA VERIFICAÇÃO -----
 
     final deliveries = await getDeliveriesForOrderStream(orderId).first;
 
@@ -99,6 +89,53 @@ class FirestoreService {
          }
        }
     }
+  }
+
+  // O resto do arquivo permanece o mesmo
+  Future<int> resynchronizeAllOrderStatus() async {
+    debugPrint('Iniciando sincronização global de status de pedidos...');
+    int updatedCount = 0;
+    
+    final querySnapshot = await _db.collection('orders')
+        .where('status', whereNotIn: [OrderStatus.finalizado.name, OrderStatus.cancelado.name])
+        .get();
+
+    for (final doc in querySnapshot.docs) {
+      final order = Order.fromFirestore(doc.data(), doc.id);
+      debugPrint('Sincronizando pedido #${order.id?.substring(0,6)}...');
+      
+      try {
+        await checkIfOrderIsFullyCompleted(order.id!);
+        updatedCount++;
+      } catch (e) {
+        debugPrint('Erro ao sincronizar pedido ${order.id}: $e');
+      }
+    }
+    
+    debugPrint('Sincronização concluída. $updatedCount pedidos foram verificados/atualizados.');
+    return updatedCount;
+  }
+  
+  Future<void> updateFinalizedOrder(Order originalOrder, Order updatedOrder) async {
+      
+      Order orderWithRefundNote = updatedOrder;
+
+      if (updatedOrder.finalAmount < originalOrder.amountPaid) {
+        double refundAmount = originalOrder.amountPaid - updatedOrder.finalAmount;
+        String newNotes = (updatedOrder.notes ?? '') + '\n[SISTEMA] Valor a devolver ao cliente: R\$${refundAmount.toStringAsFixed(2)}.';
+        orderWithRefundNote = updatedOrder.copyWith(notes: newNotes);
+      }
+
+      await updateActiveOrder(originalOrder, orderWithRefundNote);
+
+      final stockItems = await getStockItemsForOrder(originalOrder.id!);
+      final needsProduction = stockItems.any((item) => item.status == StockItemStatus.aguardandoProducao);
+
+      if (needsProduction) {
+          await updateOrderStatus(originalOrder.id!, OrderStatus.emFabricacao);
+      } else {
+          await updateOrderStatus(originalOrder.id!, OrderStatus.aguardandoEntrega);
+      }
   }
 
   Future<void> updateActiveOrder(Order originalOrder, Order updatedOrder) async {
@@ -153,20 +190,7 @@ class FirestoreService {
     await batch.commit();
     await checkAndUpdateOrderStatusAfterProduction(originalOrder.id!);
   }
-
-  Future<void> updateFinalizedOrder(Order originalOrder, Order updatedOrder) async {
-      await updateActiveOrder(originalOrder, updatedOrder);
-
-      final stockItems = await getStockItemsForOrder(originalOrder.id!);
-      final needsProduction = stockItems.any((item) => item.status == StockItemStatus.aguardandoProducao);
-
-      if (needsProduction) {
-          await updateOrderStatus(originalOrder.id!, OrderStatus.emFabricacao);
-      } else {
-          await updateOrderStatus(originalOrder.id!, OrderStatus.aguardandoEntrega);
-      }
-  }
-
+  
   Future<void> handleOrderCancellation(String orderId) async {
     final batch = _db.batch();
     final stockItemsCollection = _db.collection('stock_items');
