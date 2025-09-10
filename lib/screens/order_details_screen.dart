@@ -732,6 +732,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Gerar PDF do Pedido', onPressed: _generateOrderPdf),
           if (_currentOrder.status != OrderStatus.cotacao && _currentOrder.status != OrderStatus.cancelado)
             IconButton(
+              icon: const Icon(Icons.receipt),
+              tooltip: 'Gerar Recibo de Pagamento',
+              onPressed: _generateReceiptPdf,
+            ),
+          if (_currentOrder.status != OrderStatus.cotacao && _currentOrder.status != OrderStatus.cancelado)
+            IconButton(
               icon: const Icon(Icons.local_shipping_outlined), 
               tooltip: 'Histórico de Entregas', 
               onPressed: () async {
