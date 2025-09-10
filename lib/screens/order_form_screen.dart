@@ -38,9 +38,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   final _deliveryStateController = TextEditingController();
   final _discountController = TextEditingController();
   
-  // ##### ALTERAÇÃO INICIA AQUI #####
   final _clientController = TextEditingController();
-  // ##### ALTERAÇÃO TERMINA AQUI #####
 
   Client? _selectedClient;
   List<Client> _allClients = [];
@@ -79,7 +77,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     _deliveryCityController.dispose();
     _deliveryStateController.dispose();
     _discountController.dispose();
-    _clientController.dispose(); // ##### ALTERAÇÃO: Adicionado dispose
+    _clientController.dispose();
     super.dispose();
   }
 
@@ -103,15 +101,13 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
 
   void _populateFormForEditing() {
     final order = widget.existingOrder!;
-    // ##### ALTERAÇÃO INICIA AQUI #####
     try {
       _selectedClient = _allClients.firstWhere((c) => c.id == order.clientId);
       _clientController.text = _selectedClient!.name;
     } catch (e) {
       _selectedClient = null;
-      _clientController.text = order.clientName; // Mostra o nome antigo se o cliente foi deletado
+      _clientController.text = order.clientName;
     }
-    // ##### ALTERAÇÃO TERMINA AQUI #####
     
     _shippingCostController.text = order.shippingCost.toString();
     _discountController.text = order.discount.toString();
@@ -386,7 +382,6 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     });
   }
   
-  // ##### ALTERAÇÃO: Nova função para buscar cliente #####
   Future<void> _showClientSearchDialog() async {
     final Client? result = await showDialog<Client>(
       context: context,
@@ -402,6 +397,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     }
   }
 
+  // ##### LÓGICA DE SALVAR ATUALIZADA #####
   void _saveOrder() async {
     final currentUser = _authService.currentUser;
     if (currentUser == null) {
@@ -419,10 +415,13 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
           notes: _notesController.text, paymentMethod: _paymentMethod, deliveryAddress: deliveryAddress, deliveryDate: _estimatedDeliveryDate != null ? Timestamp.fromDate(_estimatedDeliveryDate!) : originalOrder.deliveryDate,
         );
 
-        if (originalOrder.status == OrderStatus.emFabricacao) {
-          await _firestoreService.updateInProductionOrder(originalOrder, updatedOrderData);
+        // AQUI ESTÁ A NOVA LÓGICA
+        if (originalOrder.status == OrderStatus.finalizado) {
+          // Se o pedido estava finalizado, usa a nova função para reabri-lo
+          await _firestoreService.updateFinalizedOrder(originalOrder, updatedOrderData);
         } else {
-          await _firestoreService.updateOrder(updatedOrderData);
+          // Senão, usa a função de atualização normal para pedidos ativos
+          await _firestoreService.updateActiveOrder(originalOrder, updatedOrderData);
         }
         
         final reloadedOrder = await _firestoreService.getOrderById(originalOrder.id!);
@@ -449,6 +448,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     }
   }
 
+  // O resto do arquivo (build, _buildTotalRow, etc.) continua o mesmo
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -464,7 +464,6 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
               const Divider(),
               const SizedBox(height: 8),
               
-              // ##### ALTERAÇÃO INICIA AQUI: Substituição do Dropdown por campo de busca #####
               TextFormField(
                 controller: _clientController,
                 readOnly: true,
@@ -476,7 +475,6 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                 onTap: _showClientSearchDialog,
                 validator: (value) => _selectedClient == null ? 'Selecione um cliente' : null,
               ),
-              // ##### ALTERAÇÃO TERMINA AQUI #####
 
               const SizedBox(height: 16),
               Text('Forma de Pagamento', style: Theme.of(context).textTheme.titleSmall),
@@ -620,7 +618,6 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   }
 }
 
-// ##### ALTERAÇÃO: Novo widget para o diálogo de busca de cliente #####
 class _ClientSearchDialog extends StatefulWidget {
   final List<Client> allClients;
   const _ClientSearchDialog({required this.allClients});
@@ -694,6 +691,43 @@ class _ClientSearchDialogState extends State<_ClientSearchDialog> {
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar'))
       ],
+    );
+  }
+}
+
+class _CpfCnpjFormatter extends TextInputFormatter {
+  @override
+  TextEditingValue formatEditUpdate(
+      TextEditingValue oldValue, TextEditingValue newValue) {
+    final text = newValue.text;
+    
+    if (text.isEmpty) {
+      return newValue;
+    }
+
+    final digitsOnly = text.replaceAll(RegExp(r'[^\d]'), '');
+
+    if (digitsOnly.length > 14) {
+      return oldValue;
+    }
+
+    String newText;
+
+    if (digitsOnly.length <= 11) {
+      newText = digitsOnly.replaceAllMapped(
+        RegExp(r'(\d{3})(\d{3})(\d{3})(\d{2})'),
+        (Match m) => '${m[1]}.${m[2]}.${m[3]}-${m[4]}',
+      );
+    } else {
+      newText = digitsOnly.replaceAllMapped(
+        RegExp(r'(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})'),
+        (Match m) => '${m[1]}.${m[2]}.${m[3]}/${m[4]}-${m[5]}',
+      );
+    }
+
+    return TextEditingValue(
+      text: newText,
+      selection: TextSelection.collapsed(offset: newText.length),
     );
   }
 }

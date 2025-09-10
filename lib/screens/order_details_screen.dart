@@ -120,7 +120,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       }
     }
   }
-
+  
   List<DeliverySelectionItem> _prepareSelectionItems() {
       if (_stockItemsForOrder == null || _deliveriesForOrder == null) return [];
 
@@ -164,7 +164,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       }
       return selectionItems;
   }
-  
+
   void _generateOrderPdf() async {
     setState(() => _isGeneratingPdf = true);
     try {
@@ -261,12 +261,31 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       return;
     }
 
-    final bool? confirmar = await showDialog(context: context, builder: (context) => AlertDialog(title: const Text('Confirmar Cancelamento'), content: const Text('Tem certeza que deseja cancelar este pedido? Os itens de produção associados serão excluídos.'), actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Não')), ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), child: const Text('Sim, Cancelar'))]));
+    final bool isFinalized = _currentOrder.status == OrderStatus.finalizado;
+    final String warningMessage = isFinalized
+      ? 'Tem certeza que deseja cancelar este pedido FINALIZADO? Todos os itens entregues retornarão ao estoque geral e o status será "Cancelado". Esta ação é recomendada para casos de devolução total.'
+      : 'Tem certeza que deseja cancelar este pedido? Os itens de produção associados serão excluídos.';
+    
+    final bool? confirmar = await showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Confirmar Cancelamento'),
+        content: Text(warningMessage),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Não')),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('Sim, Cancelar')
+          )
+        ]
+      )
+    );
+
     if (confirmar == true) {
       try {
-        await _firestoreService.updateOrderStatus(_currentOrder.id!, OrderStatus.cancelado);
         await _firestoreService.handleOrderCancellation(_currentOrder.id!);
-        _showSnackBar('Pedido cancelado e itens de produção removidos.');
+        _showSnackBar('Pedido cancelado. Itens retornaram ao estoque, se aplicável.');
         _reloadOrder();
       } catch (e) {
         _showSnackBar('Erro ao cancelar o pedido: $e', isError: true);
@@ -643,24 +662,23 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   
   @override
   Widget build(BuildContext context) {
-    final bool canBeEdited = _currentOrder.status == OrderStatus.cotacao || 
-                              _currentOrder.status == OrderStatus.pedido ||
-                              _currentOrder.status == OrderStatus.emFabricacao ||
-                              _currentOrder.status == OrderStatus.aguardandoEntrega;
+    // ##### LÓGICA DE VISIBILIDADE DOS BOTÕES ATUALIZADA #####
+    final bool isAdm = _currentUserRole == 'admin';
+
+    final bool canBeEdited = 
+      (_currentOrder.status != OrderStatus.finalizado && _currentOrder.status != OrderStatus.cancelado) ||
+      (isAdm && _currentOrder.status == OrderStatus.finalizado);
+
+    final bool canCancel = isAdm && _currentOrder.status != OrderStatus.cancelado;
 
     final bool canAttachProof = _currentOrder.status != OrderStatus.cotacao && 
                                 _currentOrder.status != OrderStatus.finalizado && 
                                 _currentOrder.status != OrderStatus.cancelado;
-    
-    final bool canCancel = _currentUserRole == 'admin' && 
-                            _currentOrder.status != OrderStatus.finalizado && 
-                            _currentOrder.status != OrderStatus.cancelado;
                             
-    final bool canEditPayment = _currentUserRole == 'admin' && 
-                                (_currentOrder.status == OrderStatus.emFabricacao ||
-                                  _currentOrder.status == OrderStatus.aguardandoEntrega ||
-                                  _currentOrder.status == OrderStatus.aguardandoPagamentoFinal ||
-                                  _currentOrder.status == OrderStatus.finalizado);
+    final bool canEditPayment = isAdm && 
+                                _currentOrder.status != OrderStatus.cotacao &&
+                                _currentOrder.status != OrderStatus.pedido &&
+                                _currentOrder.status != OrderStatus.cancelado;
     
     final bool needsRefund = _currentOrder.notes?.contains('Valor a devolver ao cliente:') == true;
     String? refundAmountString;
@@ -748,7 +766,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 _buildNotesSection(), 
                 _buildAttachmentsSection(), 
                 const SizedBox(height: 32),
-                if (_isUploading) const Center(child: Padding(padding: const EdgeInsets.all(16.0), child: CircularProgressIndicator()))
+                if (_isUploading) const Center(child: Padding(padding: EdgeInsets.all(16.0), child: CircularProgressIndicator()))
                 else _buildActionButtons(),
               ]
             )

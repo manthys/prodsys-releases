@@ -6,6 +6,7 @@ import 'package:rxdart/rxdart.dart';
 import '../models/order_model.dart';
 import '../models/expense_model.dart';
 import '../services/firestore_service.dart';
+import 'order_details_screen.dart'; // Import necessário
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -37,6 +38,50 @@ class _DashboardScreenState extends State<DashboardScreen> {
         _endDate = DateTime(picked.end.year, picked.end.month, picked.end.day, 23, 59, 59);
       });
     }
+  }
+
+  // ##### NOVA FUNÇÃO PARA MOSTRAR OS PEDIDOS FINALIZADOS #####
+  void _showFinalizedOrdersDialog(List<Order> finalizedOrders, DateTime startDate, DateTime endDate) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('Pedidos Finalizados (${DateFormat('dd/MM/yy').format(startDate)} - ${DateFormat('dd/MM/yy').format(endDate)})'),
+          content: SizedBox(
+            width: 600,
+            height: 400,
+            child: ListView.builder(
+              itemCount: finalizedOrders.length,
+              itemBuilder: (context, index) {
+                final order = finalizedOrders[index];
+                final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? 'N/A';
+                return Card(
+                  child: ListTile(
+                    title: Text('${order.clientName} - Pedido #$orderIdShort'),
+                    subtitle: Text('Finalizado em: ${DateFormat('dd/MM/yyyy').format(order.creationDate.toDate())}'),
+                    trailing: Text(NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(order.finalAmount)),
+                    onTap: () {
+                      Navigator.of(context).pop(); // Fecha o diálogo
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (context) => OrderDetailsScreen(order: order),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Fechar'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   @override
@@ -90,16 +135,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               );
             }
           }
-
-          // =================================================================
-          // LÓGICA DE "VALORES RECEBIDOS" CORRIGIDA AQUI
-          // =================================================================
+          
           final Map<String, double> cashInflowByRecipient = {};
-          // Agora também exclui o status "Pedido"
           final validOrdersForCashflow = ordersForFinance.where((o) => 
               o.status != OrderStatus.cancelado && 
               o.status != OrderStatus.cotacao &&
-              o.status != OrderStatus.pedido // <<< CORREÇÃO APLICADA
+              o.status != OrderStatus.pedido
           ).toList();
 
           for (final order in validOrdersForCashflow) {
@@ -114,7 +155,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final double totalCashInflow = cashInflowByRecipient.values.fold(0.0, (sum, amount) => sum + amount);
 
           final double totalExpenses = expenses.fold(0.0, (sum, expense) => sum + expense.amount);
-          final int validOrderCount = ordersForFinance.where((o) => o.status != OrderStatus.cotacao && o.status != OrderStatus.cancelado).length;
           final double balance = totalRevenue - totalExpenses;
 
           return ListView(
@@ -136,8 +176,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
               
               Text('Resumo Financeiro (Período Selecionado)', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 8),
+              
+              // ##### CARD DE FATURAMENTO AGORA É CLICÁVEL #####
+              InkWell(
+                onTap: () => _showFinalizedOrdersDialog(finalizedOrders, _startDate, _endDate),
+                child: _buildSummaryCard(
+                  title: 'Faturamento (Pedidos Finalizados)', 
+                  value: currencyFormatter.format(totalRevenue), 
+                  icon: Icons.check_circle, 
+                  color: Colors.green
+                ),
+              ),
 
-              _buildSummaryCard(title: 'Faturamento (Pedidos Finalizados)', value: currencyFormatter.format(totalRevenue), icon: Icons.check_circle, color: Colors.green),
               _buildSummaryCard(title: 'Valores Recebidos (Entradas)', value: currencyFormatter.format(totalCashInflow), icon: Icons.attach_money, color: Colors.blueAccent),
               _buildSummaryCard(title: 'Total de Gastos (Saídas)', value: currencyFormatter.format(totalExpenses), icon: Icons.trending_down, color: Colors.red),
               _buildSummaryCard(title: 'Balanço (Faturamento - Gastos)', value: currencyFormatter.format(balance), icon: Icons.account_balance_wallet, color: balance >= 0 ? Colors.teal : Colors.deepOrange),
