@@ -31,12 +31,61 @@ class GroupedStockResult {
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
 
-  // ##### ESTA É A FUNÇÃO PRINCIPAL QUE FOI CORRIGIDA #####
-  Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
-    final order = await getOrderById(orderId);
-    if (order == null || order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado) return;
+  Future<int> restoreRevertedOrders() async {
+    int restoredCount = 0;
     
-    // ----- NOVA VERIFICAÇÃO DE REEMBOLSO -----
+    final querySnapshot = await _db.collection('orders')
+        .where('status', isEqualTo: OrderStatus.cotacao.name)
+        .get();
+
+    for (final doc in querySnapshot.docs) {
+      final stockItemsSnapshot = await _db.collection('stock_items')
+          .where('orderId', isEqualTo: doc.id)
+          .limit(1)
+          .get();
+
+      if (stockItemsSnapshot.docs.isNotEmpty) {
+        await checkIfOrderIsFullyCompleted(doc.id);
+        restoredCount++;
+      }
+    }
+    
+    return restoredCount;
+  }
+  
+  Future<int> resynchronizeAllOrderStatus() async {
+    final statusesToSync = [
+      OrderStatus.emFabricacao.name,
+      OrderStatus.aguardandoEntrega.name,
+      OrderStatus.aguardandoPagamentoFinal.name,
+    ];
+    
+    final querySnapshot = await _db.collection('orders')
+        .where('status', whereIn: statusesToSync)
+        .get();
+
+    for (final doc in querySnapshot.docs) {
+      try {
+        await checkIfOrderIsFullyCompleted(doc.id);
+      } catch (e) {
+        debugPrint('Erro ao sincronizar pedido ${doc.id}: $e');
+      }
+    }
+    
+    return querySnapshot.docs.length;
+  }
+  
+  Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
+    var order = await getOrderById(orderId);
+    
+    if (order == null || 
+        order.status == OrderStatus.finalizado || 
+        order.status == OrderStatus.cancelado ||
+        order.status == OrderStatus.cotacao ||
+        order.status == OrderStatus.pedido) {
+      return;
+    }
+    
     bool needsRefund = order.amountPaid > order.finalAmount;
     bool hasRefundNote = order.notes?.contains('[SISTEMA] Valor a devolver ao cliente:') ?? false;
 
@@ -44,13 +93,11 @@ class FirestoreService {
         double refundAmount = order.amountPaid - order.finalAmount;
         String newNotes = (order.notes ?? '') + '\n[SISTEMA] Valor a devolver ao cliente: R\$${refundAmount.toStringAsFixed(2)}.';
         await _db.collection('orders').doc(orderId).update({'notes': newNotes});
-        // Recarrega o pedido para ter as notas atualizadas para o resto da função
-        await getOrderById(orderId); 
+        order = await getOrderById(orderId);
+        if(order == null) return;
     }
-    // ----- FIM DA NOVA VERIFICAÇÃO -----
 
     final deliveries = await getDeliveriesForOrderStream(orderId).first;
-
     bool allItemsDelivered = true;
     
     if (order.items.isNotEmpty) {
@@ -58,9 +105,7 @@ class FirestoreService {
         int deliveredCount = 0;
         for (final delivery in deliveries) {
           for (final deliveryItem in delivery.items) {
-            final orderItemRef = order.items.firstWhereOrNull((oi) => oi.sku == deliveryItem.sku && oi.productId == deliveryItem.productId);
-            final logoType = orderItemRef?.logoType ?? 'Nenhum';
-            if (deliveryItem.productId == orderItem.productId && logoType == orderItem.logoType) {
+            if (deliveryItem.productId == orderItem.productId && deliveryItem.logoType == orderItem.logoType) {
                 deliveredCount += deliveryItem.quantity;
             }
           }
@@ -81,43 +126,22 @@ class FirestoreService {
         await updateOrderStatus(orderId, OrderStatus.aguardandoPagamentoFinal);
       }
     } else {
-       if (order.status == OrderStatus.emFabricacao) {
-         final stockItems = await getStockItemsForOrder(orderId);
-         final hasPendingProduction = stockItems.any((item) => item.status == StockItemStatus.aguardandoProducao);
-         if (!hasPendingProduction) {
-           await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
-         }
+       final stockItems = await getStockItemsForOrder(orderId);
+       final hasPendingProduction = stockItems.any((item) => item.status == StockItemStatus.aguardandoProducao);
+
+       if (hasPendingProduction) {
+        if (order.status != OrderStatus.emFabricacao) {
+            await updateOrderStatus(orderId, OrderStatus.emFabricacao);
+        }
+       } else {
+        if (order.status != OrderStatus.aguardandoEntrega) {
+            await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
+        }
        }
     }
   }
 
-  // O resto do arquivo permanece o mesmo
-  Future<int> resynchronizeAllOrderStatus() async {
-    debugPrint('Iniciando sincronização global de status de pedidos...');
-    int updatedCount = 0;
-    
-    final querySnapshot = await _db.collection('orders')
-        .where('status', whereNotIn: [OrderStatus.finalizado.name, OrderStatus.cancelado.name])
-        .get();
-
-    for (final doc in querySnapshot.docs) {
-      final order = Order.fromFirestore(doc.data(), doc.id);
-      debugPrint('Sincronizando pedido #${order.id?.substring(0,6)}...');
-      
-      try {
-        await checkIfOrderIsFullyCompleted(order.id!);
-        updatedCount++;
-      } catch (e) {
-        debugPrint('Erro ao sincronizar pedido ${order.id}: $e');
-      }
-    }
-    
-    debugPrint('Sincronização concluída. $updatedCount pedidos foram verificados/atualizados.');
-    return updatedCount;
-  }
-  
   Future<void> updateFinalizedOrder(Order originalOrder, Order updatedOrder) async {
-      
       Order orderWithRefundNote = updatedOrder;
 
       if (updatedOrder.finalAmount < originalOrder.amountPaid) {
@@ -127,15 +151,7 @@ class FirestoreService {
       }
 
       await updateActiveOrder(originalOrder, orderWithRefundNote);
-
-      final stockItems = await getStockItemsForOrder(originalOrder.id!);
-      final needsProduction = stockItems.any((item) => item.status == StockItemStatus.aguardandoProducao);
-
-      if (needsProduction) {
-          await updateOrderStatus(originalOrder.id!, OrderStatus.emFabricacao);
-      } else {
-          await updateOrderStatus(originalOrder.id!, OrderStatus.aguardandoEntrega);
-      }
+      await checkIfOrderIsFullyCompleted(originalOrder.id!);
   }
 
   Future<void> updateActiveOrder(Order originalOrder, Order updatedOrder) async {
@@ -188,7 +204,7 @@ class FirestoreService {
     final orderRef = _db.collection('orders').doc(originalOrder.id);
     batch.update(orderRef, updatedOrder.toJson());
     await batch.commit();
-    await checkAndUpdateOrderStatusAfterProduction(originalOrder.id!);
+    await checkIfOrderIsFullyCompleted(originalOrder.id!);
   }
   
   Future<void> handleOrderCancellation(String orderId) async {
@@ -217,6 +233,49 @@ class FirestoreService {
       }
     }
     await batch.commit();
+  }
+  
+  Future<int> migrateDeliveriesAddLogoType() async {
+    final deliveriesSnapshot = await _db.collection('deliveries').get();
+    final batch = _db.batch();
+    int updatedItemsCount = 0;
+
+    for (final deliveryDoc in deliveriesSnapshot.docs) {
+      final delivery = Delivery.fromFirestore(deliveryDoc.data(), deliveryDoc.id!);
+      
+      bool needsUpdate = false;
+      final List<Map<String, dynamic>> updatedItems = [];
+
+      if (delivery.items.isNotEmpty && delivery.items.first.logoType == 'Nenhum') {
+        final order = await getOrderById(delivery.orderId);
+        if (order == null) continue;
+
+        for (final item in delivery.items) {
+          if (item.logoType == 'Nenhum') {
+            final orderItemRef = order.items.firstWhereOrNull(
+              (oi) => oi.productId == item.productId && oi.sku == item.sku
+            );
+            final correctLogoType = orderItemRef?.logoType ?? 'Nenhum';
+            
+            if (correctLogoType != 'Nenhum') {
+              needsUpdate = true;
+            }
+            updatedItems.add({ ...item.toJson(), 'logoType': correctLogoType });
+            updatedItemsCount++;
+          } else {
+            updatedItems.add(item.toJson());
+          }
+        }
+      }
+
+      if (needsUpdate) {
+        batch.update(deliveryDoc.reference, {'items': updatedItems});
+      }
+    }
+    if (updatedItemsCount > 0) {
+      await batch.commit();
+    }
+    return updatedItemsCount;
   }
   
   Stream<List<Order>> getOperationalOrdersStream() {
@@ -456,43 +515,19 @@ class FirestoreService {
     }
     await writeBatch.commit();
   }
-
-  Future<void> checkAndUpdateOrderStatusAfterProduction(String orderId) async {
-    await Future.delayed(const Duration(seconds: 2));
-
-    final order = await getOrderById(orderId);
-    if (order == null || order.status != OrderStatus.emFabricacao) {
-      return;
-    }
-
-    final allStockItemsForOrderSnapshot = await _db.collection('stock_items').where('orderId', isEqualTo: orderId).get();
-    final allStockItemsForOrder = allStockItemsForOrderSnapshot.docs.map((doc) => StockItem.fromFirestore(doc.data(), doc.id)).toList();
-
-    if (allStockItemsForOrder.isEmpty) {
-      if (order.items.isEmpty) {
-        await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
-      }
-      return;
-    }
-
-    final hasPendingItems = allStockItemsForOrder.any((item) => item.status == StockItemStatus.aguardandoProducao);
-
-    if (!hasPendingItems) {
-      await updateOrderStatus(orderId, OrderStatus.aguardandoEntrega);
-      debugPrint('Pedido #$orderId atualizado para Aguardando Entrega, pois todos os itens foram produzidos.');
-    } else {
-      debugPrint('Pedido #$orderId ainda tem itens em produção. Status mantido.');
-    }
-  }
-
+  
   Future<void> createDeliveryAndUpdateStock(Delivery delivery, List<StockItem> stockItemsToUpdate) async {
     final batch = _db.batch();
     final deliveryData = delivery.toJson();
+    
+    // GARANTE O STATUS CORRETO PARA UMA NOVA ENTREGA
     deliveryData['status'] = DeliveryStatus.emTransito.name;
+
     final deliveryRef = _db.collection('deliveries').doc();
     batch.set(deliveryRef, deliveryData);
     for (final stockItem in stockItemsToUpdate) {
       final stockRef = _db.collection('stock_items').doc(stockItem.id);
+      // GARANTE O STATUS CORRETO PARA O ITEM DE ESTOQUE
       batch.update(stockRef, {'status': StockItemStatus.emTransito.name, 'deliveryId': deliveryRef.id});
     }
     await batch.commit();
@@ -561,10 +596,15 @@ class FirestoreService {
       final productId = parts[0];
       final logoType = parts[1];
 
+      List<String> logoTypesToSearch = [logoType];
+      if (logoType == 'Nenhum') {
+          logoTypesToSearch.add('Em Branco');
+      }
+
       final broadQuery = await _db
           .collection('stock_items')
           .where('productId', isEqualTo: productId)
-          .where('logoType', isEqualTo: logoType)
+          .where('logoType', whereIn: logoTypesToSearch)
           .where('status', isEqualTo: StockItemStatus.emEstoque.name)
           .get();
 
@@ -643,7 +683,7 @@ class FirestoreService {
     }
     
     await batch.commit();
-    await checkAndUpdateOrderStatusAfterProduction(forOrder.id!);
+    await checkIfOrderIsFullyCompleted(forOrder.id!);
   }
 
   Future<void> _createProductionItemsForOrder(Order order) async {
@@ -711,7 +751,7 @@ class FirestoreService {
     }
 
     await batch.commit();
-    await checkAndUpdateOrderStatusAfterProduction(stockItemToDeallocate.orderId!);
+    await checkIfOrderIsFullyCompleted(stockItemToDeallocate.orderId!);
   }
 
   Future<int> runStatusMigrationForOldOrders() async {
@@ -741,6 +781,7 @@ class FirestoreService {
     final batch = _db.batch();
     
     final deliveryData = delivery.toJson();
+    // CORRETO: Retiradas são instantaneamente marcadas como "entregue"
     deliveryData['status'] = DeliveryStatus.entregue.name;
     
     final deliveryRef = _db.collection('deliveries').doc();

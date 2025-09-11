@@ -32,7 +32,6 @@ class _ProductionScreenState extends State<ProductionScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchTerm = '';
 
-
   @override
   void initState() {
     super.initState();
@@ -41,13 +40,13 @@ class _ProductionScreenState extends State<ProductionScreen> {
       if(mounted) setState(() => _searchTerm = _searchController.text);
     });
   }
-
+ 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
   }
-  
+
   void _setInitialDate() {
     DateTime now = DateTime.now();
     DateTime initialDate = now;
@@ -211,7 +210,9 @@ class _ProductionScreenState extends State<ProductionScreen> {
                   final itemsToLaunch = planItem.sourceItems.take(qtyProduced).toList();
                   await _firestoreService.launchProductionRun(itemsToLaunch);
                   if (planItem.sourceItems.first.orderId != null) {
-                    await _firestoreService.checkAndUpdateOrderStatusAfterProduction(planItem.sourceItems.first.orderId!);
+                    // ##### CORREÇÃO APLICADA AQUI #####
+                    // Chamando a nova função unificada e correta
+                    await _firestoreService.checkIfOrderIsFullyCompleted(planItem.sourceItems.first.orderId!);
                   }
                 }
                 

@@ -132,9 +132,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       final alreadyDeliveredCount = <String, int>{};
       for (final delivery in _deliveriesForOrder!) {
           for (final deliveredItem in delivery.items) {
-              final orderItemRef = _currentOrder.items.firstWhereOrNull((oi) => oi.sku == deliveredItem.sku && oi.productId == deliveredItem.productId);
-              final logoType = orderItemRef?.logoType ?? 'Nenhum';
-              final key = '${deliveredItem.productId}-$logoType';
+              final key = '${deliveredItem.productId}-${deliveredItem.logoType}';
               alreadyDeliveredCount.update(key, (value) => value + deliveredItem.quantity, ifAbsent: () => deliveredItem.quantity);
           }
       }
@@ -165,7 +163,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       return selectionItems;
   }
 
-  // ##### NOVA PROPRIEDADE PARA VERIFICAR SE TUDO FOI ENTREGUE #####
   bool get _areAllItemsDelivered {
     if (_currentOrder.items.isEmpty) return true;
     if (_deliveriesForOrder == null) return false;
@@ -174,9 +171,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       int deliveredCount = 0;
       for (final delivery in _deliveriesForOrder!) {
         for (final deliveryItem in delivery.items) {
-          final orderItemRef = _currentOrder.items.firstWhereOrNull((oi) => oi.sku == deliveryItem.sku && oi.productId == deliveryItem.productId);
-          final logoType = orderItemRef?.logoType ?? 'Nenhum';
-          if (deliveryItem.productId == orderItem.productId && logoType == orderItem.logoType) {
+          if (deliveryItem.productId == orderItem.productId && deliveryItem.logoType == orderItem.logoType) {
             deliveredCount += deliveryItem.quantity;
           }
         }
@@ -188,7 +183,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     return true;
   }
   
-  // O resto das funções até o `build` permanece o mesmo...
   void _generateOrderPdf() async {
     setState(() => _isGeneratingPdf = true);
     try {
@@ -571,6 +565,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       sku: sel.sku,
                       productName: sel.productName,
                       quantity: sel.quantityToDeliver,
+                      logoType: sel.logoType ?? 'Nenhum',
                     ))
                 .toList();
     
@@ -603,8 +598,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             final client = await _firestoreService.getClientById(_currentOrder.clientId);
             final companySettings = await _firestoreService.getCompanySettings();
             if (client != null && mounted) {
-               final deliveryData = newDelivery.toJson();
-               final createdDelivery = Delivery.fromFirestore(deliveryData, deliveryId);
+               final createdDelivery = newDelivery.copyWith(id: deliveryId);
                await _deliveryPdfService.generateAndShowPdf(createdDelivery, _currentOrder, client, companySettings);
             }
     
@@ -639,7 +633,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             final List<DeliverySelectionItem> selectedItems = result['selectedItems'];
             final currentUser = _authService.currentUser;
     
-            final deliveryItems = selectedItems.map((sel) => DeliveryItem(productId: sel.productId, sku: sel.sku, productName: sel.productName, quantity: sel.quantityToDeliver)).toList();
+            final deliveryItems = selectedItems.map((sel) => DeliveryItem(
+              productId: sel.productId, 
+              sku: sel.sku, 
+              productName: sel.productName, 
+              quantity: sel.quantityToDeliver,
+              logoType: sel.logoType ?? 'Nenhum',
+            )).toList();
             
             final newDelivery = Delivery(
               orderId: _currentOrder.id!, clientName: _currentOrder.clientName, deliveryDate: Timestamp.now(),
@@ -730,12 +730,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             IconButton(icon: const Icon(Icons.edit), tooltip: 'Editar Itens do Pedido', onPressed: _navigateToEditScreen),
 
           IconButton(icon: const Icon(Icons.picture_as_pdf), tooltip: 'Gerar PDF do Pedido', onPressed: _generateOrderPdf),
+          
           if (_currentOrder.status != OrderStatus.cotacao && _currentOrder.status != OrderStatus.cancelado)
             IconButton(
               icon: const Icon(Icons.receipt),
               tooltip: 'Gerar Recibo de Pagamento',
               onPressed: _generateReceiptPdf,
             ),
+
           if (_currentOrder.status != OrderStatus.cotacao && _currentOrder.status != OrderStatus.cancelado)
             IconButton(
               icon: const Icon(Icons.local_shipping_outlined), 
@@ -868,9 +870,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           if (_deliveriesForOrder != null) {
             for (final delivery in _deliveriesForOrder!) {
               for (final deliveryItem in delivery.items) {
-                 final orderItemRef = _currentOrder.items.firstWhereOrNull((oi) => oi.sku == deliveryItem.sku && oi.productId == deliveryItem.productId);
-                 final logoType = orderItemRef?.logoType ?? 'Nenhum';
-                if (deliveryItem.productId == orderItem.productId && logoType == orderItem.logoType) {
+                 if (deliveryItem.productId == orderItem.productId && deliveryItem.logoType == orderItem.logoType) {
                     deliveredCount += deliveryItem.quantity;
                 }
               }
@@ -1018,7 +1018,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final bool hasItemsInStock = _stockItemsForOrder?.any((item) => item.status == StockItemStatus.emEstoque) ?? false;
     final bool needsRefund = _currentOrder.notes?.contains('[SISTEMA] Valor a devolver ao cliente:') ?? false;
 
-    // ##### LÓGICA DO BOTÃO CORRIGIDA #####
     if (needsRefund && _areAllItemsDelivered) {
       return SizedBox(
         width: double.infinity,

@@ -2,7 +2,6 @@
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-// NOVO ENUM
 enum DeliveryStatus { emTransito, entregue }
 
 class DeliveryItem {
@@ -10,16 +9,31 @@ class DeliveryItem {
   final String sku;
   final String productName;
   final int quantity;
+  final String logoType; // ##### NOVO CAMPO ADICIONADO #####
 
   DeliveryItem({
     required this.productId,
     required this.sku,
     required this.productName,
     required this.quantity,
+    required this.logoType, // ##### NOVO CAMPO ADICIONADO #####
   });
 
-  Map<String, dynamic> toJson() => {'productId': productId, 'sku': sku, 'productName': productName, 'quantity': quantity};
-  factory DeliveryItem.fromJson(Map<String, dynamic> json) => DeliveryItem(productId: json['productId'], sku: json['sku'], productName: json['productName'], quantity: json['quantity']);
+  Map<String, dynamic> toJson() => {
+    'productId': productId, 
+    'sku': sku, 
+    'productName': productName, 
+    'quantity': quantity,
+    'logoType': logoType, // ##### NOVO CAMPO ADICIONADO #####
+  };
+  
+  factory DeliveryItem.fromJson(Map<String, dynamic> json) => DeliveryItem(
+    productId: json['productId'], 
+    sku: json['sku'], 
+    productName: json['productName'], 
+    quantity: json['quantity'],
+    logoType: json['logoType'] ?? 'Nenhum', // ##### NOVO CAMPO ADICIONADO (com fallback) #####
+  );
 }
 
 class Delivery {
@@ -31,7 +45,7 @@ class Delivery {
   final String driverName;
   final String vehiclePlate;
   final String createdByUserName;
-  final DeliveryStatus status; // <-- NOVO CAMPO
+  final DeliveryStatus status;
 
   Delivery({
     this.id,
@@ -42,8 +56,22 @@ class Delivery {
     this.driverName = '',
     this.vehiclePlate = '',
     required this.createdByUserName,
-    this.status = DeliveryStatus.emTransito, // <-- NOVO CAMPO
+    this.status = DeliveryStatus.emTransito,
   });
+
+  Delivery copyWith({String? id}) {
+    return Delivery(
+      id: id ?? this.id,
+      orderId: orderId,
+      clientName: clientName,
+      deliveryDate: deliveryDate,
+      items: items,
+      driverName: driverName,
+      vehiclePlate: vehiclePlate,
+      createdByUserName: createdByUserName,
+      status: status,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
     'orderId': orderId,
@@ -53,7 +81,7 @@ class Delivery {
     'driverName': driverName,
     'vehiclePlate': vehiclePlate,
     'createdByUserName': createdByUserName,
-    'status': status.name, // <-- NOVO CAMPO
+    'status': status.name,
   };
 
   factory Delivery.fromFirestore(Map<String, dynamic> data, String documentId) {
@@ -68,7 +96,7 @@ class Delivery {
       driverName: data['driverName'],
       vehiclePlate: data['vehiclePlate'],
       createdByUserName: data['createdByUserName'],
-      status: DeliveryStatus.values.firstWhere( // <-- NOVO CAMPO
+      status: DeliveryStatus.values.firstWhere(
         (e) => e.name == data['status'],
         orElse: () => DeliveryStatus.emTransito,
       ),

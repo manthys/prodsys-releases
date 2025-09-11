@@ -20,10 +20,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
   late TabController _tabController;
 
   final List<OrderStatus> _selectedStatusFilters = [];
-  
-  // ##### NOVO FILTRO #####
   bool _filterByPendingRefund = false;
-  
   bool _isSyncing = false;
 
   @override
@@ -38,7 +35,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
         setState(() {
           if (_tabController.indexIsChanging) {
             _selectedStatusFilters.clear();
-            _filterByPendingRefund = false; // Limpa o novo filtro também
+            _filterByPendingRefund = false;
           }
         });
       }
@@ -112,7 +109,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                   }),
                 ),
               ),
-            // ##### NOVO BOTÃO DE FILTRO #####
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 4.0),
               child: FilterChip(
@@ -123,7 +119,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                 onSelected: (selected) {
                   setState(() {
                     _filterByPendingRefund = selected;
-                    if(selected) _selectedStatusFilters.clear(); // Limpa outros filtros
+                    if(selected) _selectedStatusFilters.clear();
                   });
                 },
               ),
@@ -140,7 +136,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                     setState(() {
                       if (selected) {
                         _selectedStatusFilters.add(status);
-                        _filterByPendingRefund = false; // Limpa o filtro de reembolso
+                        _filterByPendingRefund = false;
                       } else {
                         _selectedStatusFilters.remove(status);
                       }
@@ -207,7 +203,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
       ),
       body: Column(
         children: [
-          _buildStatusFilters(), // Movido para fora da TabBarView para aplicar a ambas
+          _buildStatusFilters(),
           Expanded(
             child: StreamBuilder<List<Order>>(
               stream: firestoreService.getOrdersStream(),
@@ -225,7 +221,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                 
                 final allOrders = snapshot.data!;
                 
-                // ##### LÓGICA DE FILTRO ATUALIZADA #####
                 List<Order> filteredOrders = allOrders.where((order) {
                   final query = _searchTerm.toLowerCase();
                   final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? '';
@@ -263,7 +258,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     if (orders.isEmpty) {
       return const Center(
         child: Padding(
-          padding: EdgeInsets.all(16.0),
+          padding: const EdgeInsets.all(16.0),
           child: Text(
             'Nenhum pedido encontrado com os filtros aplicados.',
             textAlign: TextAlign.center,
