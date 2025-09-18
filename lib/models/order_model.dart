@@ -1,5 +1,3 @@
-// lib/models/order_model.dart
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'order_item_model.dart';
@@ -19,6 +17,9 @@ enum PaymentStatus { aguardandoSinal, sinalPago, pagoIntegralmente }
 
 class Order {
   final String? id;
+  final String? buyerName; // <-- ADICIONADO
+  final String? buyerPhone; // <-- ADICIONADO
+  final String? buyerEmail; // <-- ADICIONADO
   final String clientId;
   final String clientName;
   final List<OrderItem> items;
@@ -46,6 +47,9 @@ class Order {
 
   Order({
     this.id,
+    this.buyerName, // <-- ADICIONADO
+    this.buyerPhone, // <-- ADICIONADO
+    this.buyerEmail, // <-- ADICIONADO
     required this.clientId,
     required this.clientName,
     required this.items,
@@ -71,6 +75,9 @@ class Order {
   double get amountPaid => paymentDistributions.fold(0.0, (sum, item) => sum + item.amount);
 
   Order copyWith({
+    String? buyerName, // <-- ADICIONADO
+    String? buyerPhone, // <-- ADICIONADO
+    String? buyerEmail, // <-- ADICIONADO
     String? clientId, String? clientName, List<OrderItem>? items, OrderStatus? status, PaymentStatus? paymentStatus,
     double? totalItemsAmount, double? shippingCost, double? discount, double? finalAmount, List<PaymentDistribution>? paymentDistributions,
     String? paymentTerms, String? paymentMethod, String? notes, Address? deliveryAddress,
@@ -78,6 +85,9 @@ class Order {
   }) {
     return Order(
       id: id,
+      buyerName: buyerName ?? this.buyerName, // <-- ADICIONADO
+      buyerPhone: buyerPhone ?? this.buyerPhone, // <-- ADICIONADO
+      buyerEmail: buyerEmail ?? this.buyerEmail, // <-- ADICIONADO
       clientId: clientId ?? this.clientId,
       clientName: clientName ?? this.clientName,
       items: items ?? this.items,
@@ -104,6 +114,9 @@ class Order {
   Order duplicateAsQuote({required User currentUser}) {
     return Order(
       id: null,
+      buyerName: buyerName, // <-- ADICIONADO
+      buyerPhone: buyerPhone, // <-- ADICIONADO
+      buyerEmail: buyerEmail, // <-- ADICIONADO
       clientId: clientId,
       clientName: clientName,
       items: items,
@@ -129,6 +142,9 @@ class Order {
 
   Map<String, dynamic> toJson() {
     return {
+      'buyerName': buyerName, // <-- ADICIONADO
+      'buyerPhone': buyerPhone, // <-- ADICIONADO
+      'buyerEmail': buyerEmail, // <-- ADICIONADO
       'clientId': clientId, 'clientName': clientName, 'items': items.map((item) => item.toJson()).toList(),
       'status': status.name, 'paymentStatus': paymentStatus.name, 'creationDate': creationDate,
       'confirmationDate': confirmationDate, 'deliveryDate': deliveryDate, 'totalItemsAmount': totalItemsAmount,
@@ -143,38 +159,24 @@ class Order {
   factory Order.fromFirestore(Map<String, dynamic> data, String documentId) {
     var itemsList = (data['items'] as List<dynamic>?)?.map((itemJson) => OrderItem.fromJson(itemJson as Map<String, dynamic>)).toList() ?? [];
     var attachmentsList = (data['attachmentUrls'] as List<dynamic>?)?.map((url) => url as String).toList() ?? [];
-    
-    // =================================================================
-    // LÓGICA DE COMPATIBILIDADE CORRIGIDA AQUI
-    // =================================================================
-    // Primeiro, lemos o status do pedido a partir dos dados do Firestore.
     final status = OrderStatus.values.firstWhere((e) => e.name == data['status'], orElse: () => OrderStatus.cotacao);
-    
     List<PaymentDistribution> distributionsList = [];
-
-    // 1. Tenta ler a nova estrutura de pagamentos.
     if (data['paymentDistributions'] != null && (data['paymentDistributions'] as List).isNotEmpty) {
-      distributionsList = (data['paymentDistributions'] as List<dynamic>)
-          .map((distJson) => PaymentDistribution.fromJson(distJson as Map<String, dynamic>))
-          .toList();
+      distributionsList = (data['paymentDistributions'] as List<dynamic>).map((distJson) => PaymentDistribution.fromJson(distJson as Map<String, dynamic>)).toList();
     } 
-    // 2. Se não encontrar, verifica a estrutura antiga, MAS SÓ SE O PEDIDO NÃO ESTIVER CANCELADO.
     else if (status != OrderStatus.cancelado && data.containsKey('amountPaid') && (data['amountPaid'] as num? ?? 0) > 0) {
-      distributionsList.add(
-        PaymentDistribution(
-          recipient: 'Cristiano', // Destinatário padrão para pagamentos antigos
-          amount: (data['amountPaid'] as num).toDouble(),
-        ),
-      );
+      distributionsList.add(PaymentDistribution(recipient: 'Cristiano', amount: (data['amountPaid'] as num).toDouble()));
     }
-    // =================================================================
 
     return Order(
       id: documentId,
+      buyerName: data['buyerName'], // <-- ADICIONADO
+      buyerPhone: data['buyerPhone'], // <-- ADICIONADO
+      buyerEmail: data['buyerEmail'], // <-- ADICIONADO
       clientId: data['clientId'] ?? '',
       clientName: data['clientName'] ?? '',
       items: itemsList,
-      status: status, // Usa a variável de status que já lemos
+      status: status,
       paymentStatus: PaymentStatus.values.firstWhere((e) => e.name == data['paymentStatus'], orElse: () => PaymentStatus.aguardandoSinal),
       creationDate: data['creationDate'] ?? Timestamp.now(),
       confirmationDate: data['confirmationDate'],

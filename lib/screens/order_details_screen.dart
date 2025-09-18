@@ -34,6 +34,7 @@ import '../widgets/delivery_dialog.dart';
 import '../widgets/payment_confirmation_dialog.dart';
 import '../widgets/payment_distribution_dialog.dart';
 import '../widgets/pickup_dialog.dart';
+import '../widgets/currency_input_formatter.dart';
 
 // Imports das telas
 import 'order_form_screen.dart';
@@ -204,23 +205,68 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       return;
     }
 
+    final formKey = GlobalKey<FormState>();
     final nameController = TextEditingController(text: client.name);
-    final confirmed = await showDialog<bool>(
+    final amountController = TextEditingController();
+    final referenceController = TextEditingController();
+
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Gerar Recibo'),
-        content: TextField(
-          controller: nameController,
-          decoration: const InputDecoration(labelText: 'Nome para o Recibo'),
+        title: const Text('Gerar Recibo de Pagamento'),
+        content: Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: nameController,
+                  decoration: const InputDecoration(labelText: 'Nome para o Recibo'),
+                  validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: amountController,
+                  decoration: const InputDecoration(labelText: 'Valor Recebido', prefixText: 'R\$ '),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [CurrencyInputFormatter()],
+                  validator: (v) {
+                    if (v == null || v.isEmpty) return 'Obrigatório';
+                    final value = double.tryParse(v.replaceAll('.', '').replaceAll(',', '.'));
+                    if (value == null || value <= 0) return 'Valor inválido';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 16),
+                TextFormField(
+                  controller: referenceController,
+                  decoration: const InputDecoration(labelText: 'Referente a', hintText: 'Ex: Sinal de 50%, 1ª parcela, etc.'),
+                   validator: (v) => v!.isEmpty ? 'Obrigatório' : null,
+                ),
+              ],
+            ),
+          ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Cancelar')),
-          ElevatedButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Gerar')),
+          TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
+          ElevatedButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.of(context).pop({
+                  'name': nameController.text,
+                  'amount': double.parse(amountController.text.replaceAll('.', '').replaceAll(',', '.')),
+                  'reference': referenceController.text,
+                });
+              }
+            },
+            child: const Text('Gerar'),
+          ),
         ],
       ),
     );
 
-    if (confirmed != true || nameController.text.isEmpty) return;
+    if (result == null) return;
 
     setState(() => _isGeneratingPdf = true);
     try {
@@ -229,7 +275,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         _currentOrder,
         client,
         companySettings,
-        recipientName: nameController.text,
+        recipientName: result['name'],
+        receivedAmount: result['amount'],
+        paymentReference: result['reference'],
       );
     } catch (e) {
       _showSnackBar('Erro ao gerar Recibo: $e', isError: true);
@@ -811,6 +859,21 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           ],
         ),
         Text('Criado por: ${_currentOrder.createdByUserName}'), 
+        // ADICIONADO A EXIBIÇÃO DO COMPRADOR
+        if (_currentOrder.buyerName != null && _currentOrder.buyerName!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 8.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Comprador: ${_currentOrder.buyerName}', style: const TextStyle(fontWeight: FontWeight.bold, fontStyle: FontStyle.italic)),
+                if (_currentOrder.buyerPhone != null && _currentOrder.buyerPhone!.isNotEmpty)
+                  Text('Telefone: ${_currentOrder.buyerPhone}', style: const TextStyle(fontStyle: FontStyle.italic)),
+                if (_currentOrder.buyerEmail != null && _currentOrder.buyerEmail!.isNotEmpty)
+                   Text('E-mail: ${_currentOrder.buyerEmail}', style: const TextStyle(fontStyle: FontStyle.italic)),
+              ],
+            ),
+          ),
         const SizedBox(height: 8), 
         Row(children: [
           Text('Status: ', style: Theme.of(context).textTheme.bodyLarge), 
@@ -1217,4 +1280,5 @@ class _AllocationDialogState extends State<_AllocationDialog> {
       ],
     );
   }
+  
 }

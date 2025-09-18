@@ -1,8 +1,9 @@
-// lib/screens/order_form_screen.dart
+// lib/screens/order_form_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:mask_text_input_formatter/mask_text_input_formatter.dart'; // Import da máscara
 import '../models/address_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
@@ -39,6 +40,11 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   final _discountController = TextEditingController();
   
   final _clientController = TextEditingController();
+  final _buyerNameController = TextEditingController();
+  final _buyerPhoneController = TextEditingController(); // <-- ADICIONADO
+  final _buyerEmailController = TextEditingController(); // <-- ADICIONADO
+
+  final _phoneMask = MaskTextInputFormatter(mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')}); // <-- MÁSCARA
 
   Client? _selectedClient;
   List<Client> _allClients = [];
@@ -78,6 +84,9 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     _deliveryStateController.dispose();
     _discountController.dispose();
     _clientController.dispose();
+    _buyerNameController.dispose();
+    _buyerPhoneController.dispose(); // <-- ADICIONADO
+    _buyerEmailController.dispose(); // <-- ADICIONADO
     super.dispose();
   }
 
@@ -109,6 +118,9 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
       _clientController.text = order.clientName;
     }
     
+    _buyerNameController.text = order.buyerName ?? '';
+    _buyerPhoneController.text = order.buyerPhone ?? ''; // <-- ADICIONADO
+    _buyerEmailController.text = order.buyerEmail ?? ''; // <-- ADICIONADO
     _shippingCostController.text = order.shippingCost.toString();
     _discountController.text = order.discount.toString();
     _notesController.text = order.notes ?? '';
@@ -410,17 +422,17 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
       if (_isEditing) {
         final originalOrder = widget.existingOrder!;
         final updatedOrderData = originalOrder.copyWith(
+          buyerName: _buyerNameController.text,
+          buyerPhone: _buyerPhoneController.text, // <-- ADICIONADO
+          buyerEmail: _buyerEmailController.text, // <-- ADICIONADO
           clientId: _selectedClient!.id!, clientName: _selectedClient!.name, items: _orderItems,
           totalItemsAmount: _totalItemsAmount, shippingCost: _shippingCost, discount: _discount, finalAmount: _finalAmount,
           notes: _notesController.text, paymentMethod: _paymentMethod, deliveryAddress: deliveryAddress, deliveryDate: _estimatedDeliveryDate != null ? Timestamp.fromDate(_estimatedDeliveryDate!) : originalOrder.deliveryDate,
         );
 
-        // AQUI ESTÁ A NOVA LÓGICA
         if (originalOrder.status == OrderStatus.finalizado) {
-          // Se o pedido estava finalizado, usa a nova função para reabri-lo
           await _firestoreService.updateFinalizedOrder(originalOrder, updatedOrderData);
         } else {
-          // Senão, usa a função de atualização normal para pedidos ativos
           await _firestoreService.updateActiveOrder(originalOrder, updatedOrderData);
         }
         
@@ -429,6 +441,9 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
 
       } else {
         final newOrder = Order(
+          buyerName: _buyerNameController.text,
+          buyerPhone: _buyerPhoneController.text, // <-- ADICIONADO
+          buyerEmail: _buyerEmailController.text, // <-- ADICIONADO
           clientId: _selectedClient!.id!, clientName: _selectedClient!.name, items: _orderItems,
           creationDate: Timestamp.now(), totalItemsAmount: _totalItemsAmount,
           shippingCost: _shippingCost, discount: _discount, finalAmount: _finalAmount,
@@ -448,7 +463,6 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     }
   }
 
-  // O resto do arquivo (build, _buildTotalRow, etc.) continua o mesmo
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -467,13 +481,38 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
               TextFormField(
                 controller: _clientController,
                 readOnly: true,
-                decoration: const InputDecoration(
-                  labelText: 'Cliente',
-                  border: OutlineInputBorder(),
-                  suffixIcon: Icon(Icons.search),
-                ),
+                decoration: const InputDecoration(labelText: 'Cliente', border: OutlineInputBorder(), suffixIcon: Icon(Icons.search)),
                 onTap: _showClientSearchDialog,
                 validator: (value) => _selectedClient == null ? 'Selecione um cliente' : null,
+              ),
+
+              const SizedBox(height: 16),
+              
+              // SEÇÃO DO COMPRADOR ATUALIZADA
+              TextFormField(
+                controller: _buyerNameController,
+                decoration: const InputDecoration(labelText: 'Nome do Comprador (Opcional)', border: OutlineInputBorder(), prefixIcon: Icon(Icons.person_pin_outlined)),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _buyerPhoneController,
+                      decoration: const InputDecoration(labelText: 'Telefone do Comprador', border: OutlineInputBorder(), prefixIcon: Icon(Icons.phone_outlined)),
+                      keyboardType: TextInputType.phone,
+                      inputFormatters: [_phoneMask], // Aplicando a máscara
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _buyerEmailController,
+                      decoration: const InputDecoration(labelText: 'E-mail do Comprador', border: OutlineInputBorder(), prefixIcon: Icon(Icons.email_outlined)),
+                      keyboardType: TextInputType.emailAddress,
+                    ),
+                  ),
+                ],
               ),
 
               const SizedBox(height: 16),

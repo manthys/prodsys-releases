@@ -1,5 +1,3 @@
-// lib/services/receipt_pdf_service.dart
-
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
@@ -10,7 +8,14 @@ import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
 
 class ReceiptPdfService {
-  Future<void> generateAndShowPdf(Order order, Client client, CompanySettings company, {String? recipientName}) async {
+  Future<void> generateAndShowPdf(
+    Order order,
+    Client client,
+    CompanySettings company, {
+    required String recipientName,
+    required double receivedAmount,
+    required String paymentReference,
+  }) async {
     final pdf = pw.Document();
     final font = await PdfGoogleFonts.robotoRegular();
     final boldFont = await PdfGoogleFonts.robotoBold();
@@ -27,10 +32,8 @@ class ReceiptPdfService {
 
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     
-    final valueInWords = NumeroPorExtenso.escrever(order.finalAmount);
+    final valueInWords = NumeroPorExtenso.escrever(receivedAmount);
     
-    final nameOnReceipt = recipientName ?? client.name;
-
     pdf.addPage(
       pw.Page(
         theme: theme,
@@ -64,7 +67,7 @@ class ReceiptPdfService {
                     children: [
                       pw.Text('RECIBO', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 22)),
                       pw.SizedBox(height: 8),
-                      pw.Text(currencyFormatter.format(order.finalAmount), style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 18, color: PdfColors.blue)),
+                      pw.Text(currencyFormatter.format(receivedAmount), style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 18, color: PdfColors.blue)),
                     ]
                   ),
                 ],
@@ -79,13 +82,15 @@ class ReceiptPdfService {
                     const pw.TextSpan(text: 'Recebemos de '),
                     pw.TextSpan(
                       text: client.cnpj != null && client.cnpj!.isNotEmpty 
-                          ? '${nameOnReceipt.toUpperCase()} (CNPJ/CPF: ${client.cnpj})' 
-                          : nameOnReceipt.toUpperCase(), 
+                          ? '${recipientName.toUpperCase()} (CNPJ/CPF: ${client.cnpj})' 
+                          : recipientName.toUpperCase(), 
                       style: pw.TextStyle(fontWeight: pw.FontWeight.bold)
                     ),
                     const pw.TextSpan(text: ', a importância de '),
-                    pw.TextSpan(text: '${currencyFormatter.format(order.finalAmount)} ($valueInWords)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                    const pw.TextSpan(text: ', referente ao pagamento integral do pedido de número '),
+                    pw.TextSpan(text: '${currencyFormatter.format(receivedAmount)} ($valueInWords)', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                    const pw.TextSpan(text: ', referente a '),
+                    pw.TextSpan(text: '"${paymentReference.toLowerCase()}"', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                    const pw.TextSpan(text: ' do pedido de número '),
                     pw.TextSpan(text: '#${order.id?.substring(0,6).toUpperCase() ?? ''}.', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
                   ]
                 )
@@ -122,10 +127,10 @@ class ReceiptPdfService {
                 alignment: pw.Alignment.center,
                 child: pw.Column(
                   children: [
-                      pw.Text('Este recibo comprova o pagamento integral do pedido especificado.', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey)),
-                      pw.SizedBox(height: 10),
-                      pw.Text('Desenvolvido por Manthysr | Contato: cmanthysr@gmail.com', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey)),
-                    ]
+                    pw.Text('Este recibo comprova o pagamento parcial/total do pedido especificado.', style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey)),
+                    pw.SizedBox(height: 10),
+                    pw.Text('Desenvolvido por Manthysr | Contato: cmanthysr@gmail.com', style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey)),
+                  ]
                 )
               )
             ],
