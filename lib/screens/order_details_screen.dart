@@ -1,4 +1,4 @@
-// lib/screens/order_details_screen.dart
+// lib/screens/order_details_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
 
 import 'dart:io';
 import 'dart:math';
@@ -19,7 +19,7 @@ import '../models/order_item_model.dart';
 import '../models/stock_item_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
-import '../models/delivery_selection_item_model.dart'; 
+import '../models/delivery_selection_item_model.dart';
 
 // Imports dos serviços
 import '../services/auth_service.dart';
@@ -241,7 +241,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   void _confirmarExclusao() async {
     final bool? confirmar = await showDialog(context: context, builder: (context) => AlertDialog(title: const Text('Confirmar Exclusão'), content: const Text('Deseja realmente excluir esta cotação? Esta ação não pode ser desfeita.'), actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Não')), ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), child: const Text('Sim, Excluir'))]));
     if (confirmar == true) {
-      await _firestoreService.deleteOrder(_currentOrder.id!);
+      // CORREÇÃO (BUG 3): Usando handleOrderCancellation para garantir a limpeza de itens de estoque órfãos
+      await _firestoreService.handleOrderCancellation(_currentOrder.id!);
       if (mounted) Navigator.of(context).pop();
     }
   }
@@ -561,12 +562,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             
             final deliveryItems = selectedItems
                 .map((sel) => DeliveryItem(
-                      productId: sel.productId,
-                      sku: sel.sku,
-                      productName: sel.productName,
-                      quantity: sel.quantityToDeliver,
-                      logoType: sel.logoType ?? 'Nenhum',
-                    ))
+                    productId: sel.productId,
+                    sku: sel.sku,
+                    productName: sel.productName,
+                    quantity: sel.quantityToDeliver,
+                    logoType: sel.logoType ?? 'Nenhum',
+                  ))
                 .toList();
     
             final newDelivery = Delivery(
@@ -598,8 +599,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             final client = await _firestoreService.getClientById(_currentOrder.clientId);
             final companySettings = await _firestoreService.getCompanySettings();
             if (client != null && mounted) {
-               final createdDelivery = newDelivery.copyWith(id: deliveryId);
-               await _deliveryPdfService.generateAndShowPdf(createdDelivery, _currentOrder, client, companySettings);
+              final createdDelivery = newDelivery.copyWith(id: deliveryId);
+              await _deliveryPdfService.generateAndShowPdf(createdDelivery, _currentOrder, client, companySettings);
             }
     
             _showSnackBar('Retirada registrada com sucesso!');
@@ -695,13 +696,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final bool canCancel = isAdm && _currentOrder.status != OrderStatus.cancelado;
 
     final bool canAttachProof = _currentOrder.status != OrderStatus.cotacao && 
-                                _currentOrder.status != OrderStatus.finalizado && 
-                                _currentOrder.status != OrderStatus.cancelado;
-                            
+                                  _currentOrder.status != OrderStatus.finalizado && 
+                                  _currentOrder.status != OrderStatus.cancelado;
+                                
     final bool canEditPayment = isAdm && 
-                                _currentOrder.status != OrderStatus.cotacao &&
-                                _currentOrder.status != OrderStatus.pedido &&
-                                _currentOrder.status != OrderStatus.cancelado;
+                                  _currentOrder.status != OrderStatus.cotacao &&
+                                  _currentOrder.status != OrderStatus.pedido &&
+                                  _currentOrder.status != OrderStatus.cancelado;
     
     final bool needsRefund = _currentOrder.notes?.contains('[SISTEMA] Valor a devolver ao cliente:') ?? false;
     String? refundAmountString;
@@ -717,6 +718,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       appBar: AppBar(
         title: Text('Detalhes #${_currentOrder.id?.substring(0, 6).toUpperCase() ?? ''}'),
         actions: [
+          // CORREÇÃO (BUG 4): Ícone de duplicar adicionado de volta
+          IconButton(icon: const Icon(Icons.copy), tooltip: 'Duplicar como Cotação', onPressed: _duplicateOrder),
+          
           if (canAttachProof)
             IconButton(icon: const Icon(Icons.attach_file), tooltip: 'Anexar Comprovante', onPressed: _attachProof),
           
@@ -751,8 +755,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 }
               }
             ),
-          if (_currentOrder.status == OrderStatus.cotacao) IconButton(icon: const Icon(Icons.delete), tooltip: 'Excluir Cotação', onPressed: _confirmarExclusao),
-          if (canCancel) IconButton(icon: const Icon(Icons.cancel), tooltip: 'Cancelar Pedido', onPressed: _cancelarPedido),
+          if (_currentOrder.status == OrderStatus.cotacao) 
+            IconButton(icon: const Icon(Icons.delete), tooltip: 'Excluir Cotação', onPressed: _confirmarExclusao),
+          
+          if (canCancel) 
+            IconButton(icon: const Icon(Icons.cancel), tooltip: 'Cancelar Pedido', onPressed: _cancelarPedido),
+          
           const SizedBox(width: 8),
         ],
       ),
@@ -780,7 +788,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           ),
     );
   }
-  
+
   Widget _buildClientInfoSection({required bool needsRefund, String? refundAmountString}) {
     final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
     final dateToShow = _recalculatedDeliveryDate ?? _currentOrder.deliveryDate?.toDate();
@@ -870,7 +878,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           if (_deliveriesForOrder != null) {
             for (final delivery in _deliveriesForOrder!) {
               for (final deliveryItem in delivery.items) {
-                 if (deliveryItem.productId == orderItem.productId && deliveryItem.logoType == orderItem.logoType) {
+                  if (deliveryItem.productId == orderItem.productId && deliveryItem.logoType == orderItem.logoType) {
                     deliveredCount += deliveryItem.quantity;
                 }
               }

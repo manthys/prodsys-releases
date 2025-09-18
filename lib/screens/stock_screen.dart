@@ -1,4 +1,4 @@
-// lib/screens/stock_screen.dart
+// lib/screens/stock_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -47,10 +47,13 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     super.dispose();
   }
 
-  void _showAdjustmentDialog(Map<String, dynamic> stockGroup) async {
+  // =================================================================
+  // FUNÇÃO MODIFICADA PARA ABRIR O DIÁLOGO DE AJUSTE
+  // =================================================================
+  void _showAdjustmentDialog(Map<String, dynamic> stockGroup, {required bool isCorrection}) async {
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => StockAdjustmentDialog(stockGroup: stockGroup),
+      builder: (context) => StockAdjustmentDialog(stockGroup: stockGroup, isCorrection: isCorrection),
     );
 
     if (result != null) {
@@ -59,7 +62,13 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
       final int newQuantity = result['newQuantity'];
       final String reason = result['reason'];
 
-      await _firestoreService.adjustStockQuantity(item, initialQuantity, newQuantity, reason);
+      if (isCorrection) {
+        // Chama a nova função que apenas deleta o excesso
+        await _firestoreService.correctStockOverage(item, initialQuantity, newQuantity, reason);
+      } else {
+        // Chama a função original que reporta perda e repõe na produção
+        await _firestoreService.adjustStockQuantity(item, initialQuantity, newQuantity, reason);
+      }
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -345,7 +354,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
             final query = _searchTerm.toLowerCase();
             searchedItems = allStockItems.where((item) {
               return item.productName.toLowerCase().contains(query) ||
-                     item.sku.toLowerCase().contains(query);
+                      item.sku.toLowerCase().contains(query);
             }).toList();
           }
 
@@ -448,6 +457,9 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
     );
   }
 
+  // =================================================================
+  // WIDGET DO CARD DE ESTOQUE ATUALIZADO COM O NOVO MENU
+  // =================================================================
   Widget _buildStockCard(BuildContext context, Map<String, dynamic> group) {
     final StockItem item = group['item'];
     final int count = (group['items'] as List<StockItem>).length;
@@ -455,9 +467,7 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
 
     String orderText;
     if (item.orderId != null && item.orderId!.isNotEmpty) {
-      String orderIdShort = item.orderId!.length >= 6
-          ? item.orderId!.substring(0, 6).toUpperCase()
-          : item.orderId!.toUpperCase();
+      String orderIdShort = item.orderId!.length >= 6 ? item.orderId!.substring(0, 6).toUpperCase() : item.orderId!.toUpperCase();
       orderText = 'Pedido: #$orderIdShort - ${item.clientName}';
     } else {
       orderText = 'Estoque Geral';
@@ -499,18 +509,32 @@ class _StockScreenState extends State<StockScreen> with SingleTickerProviderStat
             ),
           Text('${count.toString()} un.', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
           const SizedBox(width: 8),
-          IconButton(
-            icon: const Icon(Icons.build_circle_outlined, color: Colors.grey),
+          PopupMenuButton<String>(
             tooltip: 'Ajustar Quantidade',
-            onPressed: () {
-              final adjustmentGroup = {
-                'item': item,
-                'count': count,
-                'items': group['items'],
-              };
-              _showAdjustmentDialog(adjustmentGroup);
+            icon: const Icon(Icons.build_circle_outlined, color: Colors.grey),
+            onSelected: (value) {
+               final adjustmentGroup = {
+                  'item': item,
+                  'count': count,
+                  'items': group['items'],
+                };
+              if (value == 'correction') {
+                _showAdjustmentDialog(adjustmentGroup, isCorrection: true);
+              } else if (value == 'loss') {
+                _showAdjustmentDialog(adjustmentGroup, isCorrection: false);
+              }
             },
-          )
+            itemBuilder: (context) => [
+              const PopupMenuItem(
+                value: 'correction',
+                child: ListTile(leading: Icon(Icons.edit, color: Colors.blue), title: Text('Corrigir Excesso'))
+              ),
+              const PopupMenuItem(
+                value: 'loss',
+                child: ListTile(leading: Icon(Icons.warning_amber, color: Colors.red), title: Text('Relatar Perda/Quebra'))
+              ),
+            ],
+          ),
         ],
       ),
     );

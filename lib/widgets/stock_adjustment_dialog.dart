@@ -1,14 +1,18 @@
-// lib/widgets/stock_adjustment_dialog.dart
+// lib/widgets/stock_adjustment_dialog.dart (VERSÃO COMPLETA E CORRIGIDA)
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/stock_item_model.dart';
-import '../models/product_model.dart';
 
 class StockAdjustmentDialog extends StatefulWidget {
   final Map<String, dynamic> stockGroup;
+  final bool isCorrection; // <-- PARÂMETRO ADICIONADO
 
-  const StockAdjustmentDialog({super.key, required this.stockGroup});
+  const StockAdjustmentDialog({
+    super.key, 
+    required this.stockGroup,
+    required this.isCorrection, // <-- PARÂMETRO ADICIONADO
+  });
 
   @override
   _StockAdjustmentDialogState createState() => _StockAdjustmentDialogState();
@@ -28,6 +32,13 @@ class _StockAdjustmentDialogState extends State<StockAdjustmentDialog> {
     _quantityController.text = _initialQuantity.toString();
   }
 
+  @override
+  void dispose() {
+    _quantityController.dispose();
+    _reasonController.dispose();
+    super.dispose();
+  }
+
   void _submit() {
     if (_formKey.currentState!.validate()) {
       final newQuantity = int.parse(_quantityController.text);
@@ -41,9 +52,10 @@ class _StockAdjustmentDialogState extends State<StockAdjustmentDialog> {
   @override
   Widget build(BuildContext context) {
     final StockItem item = widget.stockGroup['item'];
+    final String title = widget.isCorrection ? 'Corrigir Excesso de Estoque' : 'Relatar Perda/Quebra';
 
     return AlertDialog(
-      title: Text('Ajustar Estoque de ${item.productName}'),
+      title: Text(title),
       content: Form(
         key: _formKey,
         child: Column(
@@ -52,7 +64,7 @@ class _StockAdjustmentDialogState extends State<StockAdjustmentDialog> {
           children: [
             Text('Produto: ${item.sku} - ${item.productName}'),
             Text('Status: ${_getStatusName(item.status)}'),
-            Text('Pedido: ${item.orderId?.substring(0, 6).toUpperCase() ?? 'Estoque Manual'}'),
+            Text('Pedido: ${item.orderId?.substring(0, 6).toUpperCase() ?? 'Estoque Geral'}'),
             const SizedBox(height: 20),
             TextFormField(
               controller: _quantityController,
@@ -61,7 +73,9 @@ class _StockAdjustmentDialogState extends State<StockAdjustmentDialog> {
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
               validator: (value) {
                 if (value == null || value.isEmpty) return 'Obrigatório';
-                if (int.tryParse(value) == null) return 'Número inválido';
+                final newQty = int.tryParse(value);
+                if (newQty == null) return 'Número inválido';
+                if (newQty >= _initialQuantity) return 'Deve ser menor que a atual';
                 return null;
               },
             ),
