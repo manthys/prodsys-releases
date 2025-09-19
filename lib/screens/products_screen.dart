@@ -1,4 +1,4 @@
-// lib/screens/products_screen.dart
+// lib/screens/products_screen.dart (VERSÃO CORRIGIDA COM O LAYOUT ANTIGO)
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -36,7 +36,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   void _showProductDialog({Product? product}) async {
-    final result = await showDialog<Product>(context: context, builder: (context) => ProductDialog(product: product));
+    final result = await showDialog<Product>(
+      context: context, 
+      builder: (context) => ProductDialog(product: product)
+    );
     if (result != null) {
       if (product == null) {
         await firestoreService.addProduct(result);
@@ -89,12 +92,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Catálogo de Produtos'),
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(60.0),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(16.0),
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
@@ -102,81 +103,81 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide: BorderSide.none,
                 ),
-                filled: true,
-                contentPadding: EdgeInsets.zero,
-                suffixIcon: _searchTerm.isNotEmpty
-                    ? IconButton(
-                        icon: const Icon(Icons.clear),
-                        onPressed: () => _searchController.clear(),
-                      )
-                    : null,
               ),
             ),
           ),
-        ),
-      ),
-      body: StreamBuilder<List<Product>>(
-        stream: firestoreService.getProductsStream(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-          if (snapshot.hasError) return Center(child: Text('Erro: ${snapshot.error}'));
-          if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('Nenhum produto cadastrado.'));
+          Expanded(
+            child: StreamBuilder<List<Product>>(
+              stream: firestoreService.getProductsStream(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                if (snapshot.hasError) return Center(child: Text('Erro: ${snapshot.error}'));
+                if (!snapshot.hasData || snapshot.data!.isEmpty) return const Center(child: Text('Nenhum produto cadastrado.'));
 
-          final filteredProducts = snapshot.data!.where((product) {
-            final query = _searchTerm.toLowerCase();
-            return product.name.toLowerCase().contains(query) || product.sku.toLowerCase().contains(query);
-          }).toList();
+                final filteredProducts = snapshot.data!.where((product) {
+                  final query = _searchTerm.toLowerCase();
+                  return product.name.toLowerCase().contains(query) || product.sku.toLowerCase().contains(query);
+                }).toList();
 
-          if (filteredProducts.isEmpty) {
-            return const Center(child: Text('Nenhum produto encontrado com o termo buscado.'));
-          }
+                if (filteredProducts.isEmpty) {
+                  return const Center(child: Text('Nenhum produto encontrado com o termo buscado.'));
+                }
 
-          // ##### ESTRUTURA DE LAYOUT CORRIGIDA PARA ROLAGEM #####
-          return ListView(
-            padding: const EdgeInsets.all(16.0),
-            children: [
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  columns: const [
-                    DataColumn(label: Text('Nome/Descrição', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('SKU', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Tipo de Forma', style: TextStyle(fontWeight: FontWeight.bold))),
-                    DataColumn(label: Text('Preço S/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
-                    DataColumn(label: Text('Preço C/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
-                    DataColumn(label: Text('Adic. Logo', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
-                    DataColumn(label: Text('Ações', style: TextStyle(fontWeight: FontWeight.bold))),
-                  ],
-                  rows: filteredProducts.map((product) {
-                    final priceWithoutNota = _findPrice(product, 'Sem Nota');
-                    final priceWithNota = _findPrice(product, 'Com Nota');
-
-                    return DataRow(cells: [
-                      DataCell(Text(product.name)),
-                      DataCell(Text(product.sku)),
-                      DataCell(Text(product.moldType)),
-                      DataCell(Text(currencyFormatter.format(priceWithoutNota.price))),
-                      DataCell(Text(currencyFormatter.format(priceWithNota.price))),
-                      DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
-                      DataCell(Row(
-                        children: [
-                          IconButton(icon: const Icon(Icons.edit, color: Colors.blue), tooltip: 'Editar', onPressed: () => _showProductDialog(product: product)),
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline, color: Colors.red),
-                            tooltip: 'Excluir',
-                            onPressed: () => _confirmDelete(context, product),
-                          ),
+                // ##### ESTRUTURA DE LAYOUT CORRIGIDA PARA O DATATABLE ANTIGO #####
+                return ListView(
+                  padding: const EdgeInsets.all(16.0),
+                  children: [
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: DataTable(
+                        columnSpacing: 24, // Ajuste o espaçamento se necessário
+                        headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
+                        columns: const [
+                          DataColumn(label: Text('Nome/Descrição', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('SKU', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Tipo de Forma', style: TextStyle(fontWeight: FontWeight.bold))),
+                          DataColumn(label: Text('Preço S/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                          DataColumn(label: Text('Preço C/ Nota', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                          DataColumn(label: Text('Adic. Logo', style: TextStyle(fontWeight: FontWeight.bold)), numeric: true),
+                          DataColumn(label: Text('Ações', style: TextStyle(fontWeight: FontWeight.bold))),
                         ],
-                      )),
-                    ]);
-                  }).toList(),
-                ),
-              ),
-            ],
-          );
-        },
+                        rows: filteredProducts.map((product) {
+                          final priceWithoutNota = _findPrice(product, 'Sem Nota');
+                          final priceWithNota = _findPrice(product, 'Com Nota');
+
+                          return DataRow(cells: [
+                            DataCell(Text(product.name)),
+                            DataCell(Text(product.sku)),
+                            DataCell(Text(product.moldType)),
+                            DataCell(Text(currencyFormatter.format(priceWithoutNota.price))),
+                            DataCell(Text(currencyFormatter.format(priceWithNota.price))),
+                            DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
+                            DataCell(Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.blue), 
+                                  tooltip: 'Editar', 
+                                  onPressed: () => _showProductDialog(product: product)
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                  tooltip: 'Excluir',
+                                  onPressed: () => _confirmDelete(context, product),
+                                ),
+                              ],
+                            )),
+                          ]);
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }

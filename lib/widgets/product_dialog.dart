@@ -1,7 +1,6 @@
 // lib/widgets/product_dialog.dart
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import '../models/product_model.dart';
 import '../models/price_variation_model.dart';
 
@@ -20,9 +19,10 @@ class _ProductDialogState extends State<ProductDialog> {
   final _moldTypeController = TextEditingController();
   final _clientLogoPriceController = TextEditingController();
 
-  // Controladores fixos para os dois tipos de preço
   final _priceWithoutNotaController = TextEditingController();
   final _priceWithNotaController = TextEditingController();
+
+  bool _isCompanyLogoProduct = false;
 
   @override
   void initState() {
@@ -32,8 +32,8 @@ class _ProductDialogState extends State<ProductDialog> {
       _skuController.text = widget.product!.sku;
       _moldTypeController.text = widget.product!.moldType;
       _clientLogoPriceController.text = widget.product!.clientLogoPrice.toString();
+      _isCompanyLogoProduct = widget.product!.isCompanyLogoProduct;
       
-      // Popula os campos de preço com base na descrição
       final priceWithNota = widget.product!.priceVariations.firstWhere(
         (v) => v.description == 'Com Nota',
         orElse: () => PriceVariation(description: 'Com Nota', price: 0.0),
@@ -47,7 +47,6 @@ class _ProductDialogState extends State<ProductDialog> {
       _priceWithoutNotaController.text = priceWithoutNota.price.toString();
       
     } else {
-       // Valores padrão para um novo produto
       _priceWithNotaController.text = '0.0';
       _priceWithoutNotaController.text = '0.0';
     }
@@ -66,7 +65,6 @@ class _ProductDialogState extends State<ProductDialog> {
   
   void _saveForm() {
     if (_formKey.currentState!.validate()) {
-      // Cria a lista de variações com base nos controladores
       final List<PriceVariation> priceVariations = [
         PriceVariation(
           description: 'Sem Nota',
@@ -85,6 +83,7 @@ class _ProductDialogState extends State<ProductDialog> {
         moldType: _moldTypeController.text,
         clientLogoPrice: double.tryParse(_clientLogoPriceController.text.replaceAll(',', '.')) ?? 0.0,
         priceVariations: priceVariations,
+        isCompanyLogoProduct: _isCompanyLogoProduct,
       );
       Navigator.of(context).pop(product);
     }
@@ -95,7 +94,7 @@ class _ProductDialogState extends State<ProductDialog> {
     return AlertDialog(
       title: Text(widget.product == null ? 'Novo Produto' : 'Editar Produto'),
       content: SizedBox(
-        width: 500, // Largura ajustada
+        width: 500,
         child: Form(
           key: _formKey,
           child: SingleChildScrollView(
@@ -109,11 +108,23 @@ class _ProductDialogState extends State<ProductDialog> {
                 const SizedBox(height: 16),
                 TextFormField(controller: _moldTypeController, decoration: const InputDecoration(labelText: 'Tipo de Forma'), validator: (v) => v!.isEmpty ? 'Obrigatório' : null),
                 const SizedBox(height: 16),
+                CheckboxListTile(
+                  title: const Text("Este é um produto com a logo da empresa"),
+                  subtitle: const Text("Marque para produção de estoque com logo própria"),
+                  value: _isCompanyLogoProduct,
+                  onChanged: (newValue) {
+                    setState(() {
+                      _isCompanyLogoProduct = newValue ?? false;
+                    });
+                  },
+                  controlAffinity: ListTileControlAffinity.leading,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                const SizedBox(height: 16),
                 TextFormField(controller: _clientLogoPriceController, decoration: const InputDecoration(labelText: 'Adicional por Logo do Cliente (R\$)'), keyboardType: const TextInputType.numberWithOptions(decimal: true)),
                 const Divider(height: 32),
                 Text('Tabela de Preços', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 16),
-                // Campos fixos para os preços
                 TextFormField(
                   controller: _priceWithoutNotaController,
                   decoration: const InputDecoration(labelText: 'Preço SEM Nota (R\$)'),

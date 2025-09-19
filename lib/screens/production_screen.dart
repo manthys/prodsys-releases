@@ -123,6 +123,9 @@ class _ProductionScreenState extends State<ProductionScreen> {
     }
   }
 
+  // =================================================================
+  // FUNÇÃO ATUALIZADA COM A LÓGICA DE EXIBIÇÃO CORRETA
+  // =================================================================
   void _showProduceForStockDialog(StockOpportunity opportunity) async {
     final Product? selectedProduct = await showDialog<Product>(
       context: context,
@@ -139,7 +142,11 @@ class _ProductionScreenState extends State<ProductionScreen> {
                   Text('A forma "${opportunity.mold.name}" está ociosa. Qual produto você deseja fabricar?', style: Theme.of(context).textTheme.bodyLarge),
                   const Divider(height: 24),
                   ...opportunity.availableProducts.map((product) {
-                    final String logoTypeLabel = product.sku.toLowerCase().contains('cleiton premoldados') ? 'Logo da Empresa' : 'Nenhum';
+                    // LÓGICA HÍBRIDA APLICADA TAMBÉM NA EXIBIÇÃO DA LISTA
+                    final bool hasCompanyLogo = product.isCompanyLogoProduct || 
+                                                product.sku.toLowerCase().contains('CLEITON PREMOLDADO');
+                    final String logoTypeLabel = hasCompanyLogo ? 'Própria' : 'Nenhum';
+                    
                     return ListTile(
                       title: Text(product.name),
                       subtitle: Text('SKU: ${product.sku} | Tipo: $logoTypeLabel'),
@@ -156,7 +163,11 @@ class _ProductionScreenState extends State<ProductionScreen> {
     );
 
     if (selectedProduct != null) {
-      final String logoTypeForDb = selectedProduct.sku.toLowerCase().contains('cleiton premoldados') ? 'Própria' : 'Nenhum';
+      // Esta parte já estava correta, mas a mantemos para consistência
+      final bool hasCompanyLogo = selectedProduct.isCompanyLogoProduct || 
+                                  selectedProduct.sku.toLowerCase().contains('CLEITON PREMOLDADO');
+      final String logoTypeForDb = hasCompanyLogo ? 'Própria' : 'Nenhum';
+      
       final tempPlanItem = ProductionPlanItem(
         productId: selectedProduct.id!,
         productName: selectedProduct.name,
@@ -386,10 +397,27 @@ class _ProductionScreenState extends State<ProductionScreen> {
               final idleMolds = allMolds.where((mold) => !usedMoldTypes.contains(mold.name)).toList();
 
               for (final mold in idleMolds) {
+                // =========================================================
+                // LÓGICA DE FILTRAGEM FINAL E CORRETA AQUI
+                // =========================================================
                 final productsForStock = productCatalog.values.where((p) {
                   if (p.moldType != mold.name) return false;
+
                   final skuLower = p.sku.toLowerCase();
-                  return skuLower.contains('cleiton premoldados') || !skuLower.contains('manayra');
+
+                  // REGRA 1: Se for da empresa, PODE (e a verificação para aqui).
+                  if (skuLower.contains('cleiton premoldado')) {
+                    return true;
+                  }
+
+                  // REGRA 2: Se não for da empresa E tiver a barra, é de cliente. NÃO PODE.
+                  if (skuLower.contains('/')) {
+                    return false;
+                  }
+
+                  // REGRA 3: Se não for da empresa e não tiver a barra, é genérico. PODE.
+                  return true;
+
                 }).toList();
 
                 if (productsForStock.isNotEmpty) {
