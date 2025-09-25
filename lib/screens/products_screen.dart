@@ -1,4 +1,4 @@
-// lib/screens/products_screen.dart (VERSÃO FINAL COM PERMISSÕES E LAYOUT ANTIGO CORRIGIDO)
+// lib/screens/products_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -8,8 +8,8 @@ import '../services/firestore_service.dart';
 import '../widgets/product_dialog.dart';
 
 class ProductsScreen extends StatefulWidget {
-  final String userRole;
-  const ProductsScreen({super.key, this.userRole = 'employee'});
+  // O parâmetro userRole não é mais necessário aqui
+  const ProductsScreen({super.key});
 
   @override
   State<ProductsScreen> createState() => _ProductsScreenState();
@@ -126,7 +126,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 }
 
                 return ListView(
-                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                  padding: const EdgeInsets.all(16.0),
                   children: [
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
@@ -153,25 +153,24 @@ class _ProductsScreenState extends State<ProductsScreen> {
                             DataCell(Text(currencyFormatter.format(priceWithoutNota.price))),
                             DataCell(Text(currencyFormatter.format(priceWithNota.price))),
                             DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
-                            DataCell(
-                              widget.userRole == 'admin'
-                                ? Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.edit, color: Colors.blue), 
-                                        tooltip: 'Editar', 
-                                        onPressed: () => _showProductDialog(product: product)
-                                      ),
-                                      IconButton(
-                                        icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                        tooltip: 'Excluir',
-                                        onPressed: () => _confirmDelete(context, product),
-                                      ),
-                                    ],
-                                  )
-                                : const SizedBox.shrink(), // Mostra uma célula vazia para funcionários
-                            ),
+                            // =================================================================
+                            // CONDIÇÃO REMOVIDA, BOTÕES SEMPRE VISÍVEIS
+                            // =================================================================
+                            DataCell(Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.blue), 
+                                  tooltip: 'Editar', 
+                                  onPressed: () => _showProductDialog(product: product)
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                  tooltip: 'Excluir',
+                                  onPressed: () => _confirmDelete(context, product),
+                                ),
+                              ],
+                            )),
                           ]);
                         }).toList(),
                       ),

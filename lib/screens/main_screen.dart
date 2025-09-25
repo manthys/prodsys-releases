@@ -1,4 +1,4 @@
-// lib/screens/main_screen.dart (VERSÃO CORRIGIDA)
+// lib/screens/main_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -40,36 +40,13 @@ class _MainScreenState extends State<MainScreen> {
   String _userRole = 'employee';
   bool _isLoadingRole = true;
 
-  // Lista de Admin não muda
   final List<Widget> _adminScreens = const [DashboardScreen(), OrdersScreen(), ProductionScreen(), StockScreen(), ClientsScreen(), ProductsScreen(), MoldsScreen(), ExpensesScreen(), ManageUsersScreen(), SettingsScreen()];
   final List<String> _adminTitles = const ['Dashboard', 'Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos', 'Gerenciar Formas', 'Controle de Gastos', 'Gerenciar Usuários', 'Configurações da Empresa'];
   final List<NavigationRailDestination> _adminDestinations = const [NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Dashboard')), NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos')), NavigationRailDestination(icon: Icon(Icons.handyman_outlined), selectedIcon: Icon(Icons.handyman), label: Text('Formas')), NavigationRailDestination(icon: Icon(Icons.money_off_outlined), selectedIcon: Icon(Icons.money_off), label: Text('Gastos')), NavigationRailDestination(icon: Icon(Icons.manage_accounts_outlined), selectedIcon: Icon(Icons.manage_accounts), label: Text('Usuários')), NavigationRailDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: Text('Ajustes'))];
   
-  // =================================================================
-  // ALTERAÇÕES NAS LISTAS DE FUNCIONÁRIOS
-  // =================================================================
-  final List<Widget> _employeeScreens = const [
-    OrdersScreen(), 
-    ProductionScreen(), 
-    StockScreen(), 
-    ClientsScreen(),
-    ProductsScreen(), // <-- TELA DE PRODUTOS ADICIONADA
-  ];
-  final List<String> _employeeTitles = const [
-    'Cotações e Pedidos', 
-    'Produção Diária', 
-    'Controle de Estoque', 
-    'Clientes',
-    'Catálogo de Produtos', // <-- TÍTULO ADICIONADO
-  ];
-  final List<NavigationRailDestination> _employeeDestinations = const [
-    NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), 
-    NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), 
-    NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), 
-    NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')),
-    NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos')), // <-- ITEM DE NAVEGAÇÃO ADICIONADO
-  ];
-
+  final List<Widget> _employeeScreens = const [OrdersScreen(), ProductionScreen(), StockScreen(), ClientsScreen(), ProductsScreen()];
+  final List<String> _employeeTitles = const ['Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos'];
+  final List<NavigationRailDestination> _employeeDestinations = const [NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos'))];
 
   @override
   void initState() {
@@ -132,7 +109,6 @@ class _MainScreenState extends State<MainScreen> {
     final bool isAdmin = _userRole == 'admin';
     String? tooltip;
     VoidCallback? onPressed;
-    // Garante que o índice não estoure a lista de títulos de funcionário
     if (_selectedIndex >= (isAdmin ? _adminTitles.length : _employeeTitles.length)) {
       _selectedIndex = 0;
     }
@@ -142,7 +118,18 @@ class _MainScreenState extends State<MainScreen> {
       case 'Cotações e Pedidos': tooltip = 'Nova Cotação'; onPressed = () => Navigator.of(fabContext).push(MaterialPageRoute(builder: (context) => const OrderFormScreen())); break;
       case 'Clientes': tooltip = 'Adicionar Cliente'; onPressed = () async { final result = await showDialog<Client>(context: fabContext, builder: (_) => const ClientDialog()); if (result != null && mounted) await _firestoreService.addClient(result); }; break;
       case 'Controle de Estoque': tooltip = 'Adicionar Estoque Manual'; onPressed = () async { final result = await showDialog<bool>(context: fabContext, builder: (_) => const StockItemDialog()); if (result == true && mounted) { ScaffoldMessenger.of(fabContext).showSnackBar(const SnackBar(content: Text('Estoque adicionado!'), backgroundColor: Colors.green)); } }; break;
-      case 'Catálogo de Produtos': if (isAdmin) { tooltip = 'Adicionar Produto'; onPressed = () async { final result = await showDialog<Product>(context: fabContext, builder: (_) => const ProductDialog()); if (result != null && mounted) await _firestoreService.addProduct(result); }; } break;
+      
+      // =================================================================
+      // CONDIÇÃO "if (isAdmin)" REMOVIDA AQUI
+      // =================================================================
+      case 'Catálogo de Produtos': 
+        tooltip = 'Adicionar Produto'; 
+        onPressed = () async { 
+          final result = await showDialog<Product>(context: fabContext, builder: (_) => const ProductDialog()); 
+          if (result != null && mounted) await _firestoreService.addProduct(result); 
+        }; 
+        break;
+
       case 'Gerenciar Formas': if (isAdmin) { tooltip = 'Adicionar Forma'; onPressed = () async { final result = await showDialog<Mold>(context: fabContext, builder: (_) => const MoldDialog()); if (result != null && mounted) await _firestoreService.addMold(result); }; } break;
       case 'Controle de Gastos': if (isAdmin) { tooltip = 'Nova Despesa'; onPressed = () async { final result = await showDialog<Expense>(context: fabContext, builder: (_) => const ExpenseDialog()); if (result != null && mounted) await _firestoreService.addExpense(result); }; } break;
       case 'Gerenciar Usuários': if (isAdmin) { tooltip = 'Novo Funcionário'; onPressed = () async { final result = await showDialog<bool>(context: fabContext, builder: (_) => const UserDialog()); if (result == true && mounted) { ScaffoldMessenger.of(fabContext).showSnackBar(const SnackBar(content: Text('Funcionário criado com sucesso!'), backgroundColor: Colors.green)); } }; } break;
@@ -157,27 +144,7 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final bool isAdmin = _userRole == 'admin';
-    
-    // Agora que as listas podem ter tamanhos diferentes, precisamos construir a lista de telas dinamicamente
-    List<Widget> getScreensForRole(String role) {
-      if (role == 'admin') {
-        return _adminScreens.map((screen) {
-          if (screen is ProductsScreen) {
-            return ProductsScreen(userRole: 'admin');
-          }
-          return screen;
-        }).toList();
-      } else {
-        return _employeeScreens.map((screen) {
-          if (screen is ProductsScreen) {
-            return ProductsScreen(userRole: 'employee');
-          }
-          return screen;
-        }).toList();
-      }
-    }
-
-    final screens = getScreensForRole(_userRole);
+    final screens = isAdmin ? _adminScreens : _employeeScreens;
     final titles = isAdmin ? _adminTitles : _employeeTitles;
     final destinations = isAdmin ? _adminDestinations : _employeeDestinations;
 
