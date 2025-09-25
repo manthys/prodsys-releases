@@ -1,7 +1,7 @@
-// lib/screens/main_screen.dart
+// lib/screens/main_screen.dart (VERSÃO CORRIGIDA)
 
 import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart'; // <-- NOVO IMPORT
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/client_model.dart';
 import '../models/expense_model.dart';
@@ -40,13 +40,35 @@ class _MainScreenState extends State<MainScreen> {
   String _userRole = 'employee';
   bool _isLoadingRole = true;
 
-  // ... (listas de telas e títulos permanecem as mesmas)
+  // Lista de Admin não muda
   final List<Widget> _adminScreens = const [DashboardScreen(), OrdersScreen(), ProductionScreen(), StockScreen(), ClientsScreen(), ProductsScreen(), MoldsScreen(), ExpensesScreen(), ManageUsersScreen(), SettingsScreen()];
   final List<String> _adminTitles = const ['Dashboard', 'Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos', 'Gerenciar Formas', 'Controle de Gastos', 'Gerenciar Usuários', 'Configurações da Empresa'];
   final List<NavigationRailDestination> _adminDestinations = const [NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Dashboard')), NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos')), NavigationRailDestination(icon: Icon(Icons.handyman_outlined), selectedIcon: Icon(Icons.handyman), label: Text('Formas')), NavigationRailDestination(icon: Icon(Icons.money_off_outlined), selectedIcon: Icon(Icons.money_off), label: Text('Gastos')), NavigationRailDestination(icon: Icon(Icons.manage_accounts_outlined), selectedIcon: Icon(Icons.manage_accounts), label: Text('Usuários')), NavigationRailDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: Text('Ajustes'))];
-  final List<Widget> _employeeScreens = const [OrdersScreen(), ProductionScreen(), StockScreen(), ClientsScreen()];
-  final List<String> _employeeTitles = const ['Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes'];
-  final List<NavigationRailDestination> _employeeDestinations = const [NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes'))];
+  
+  // =================================================================
+  // ALTERAÇÕES NAS LISTAS DE FUNCIONÁRIOS
+  // =================================================================
+  final List<Widget> _employeeScreens = const [
+    OrdersScreen(), 
+    ProductionScreen(), 
+    StockScreen(), 
+    ClientsScreen(),
+    ProductsScreen(), // <-- TELA DE PRODUTOS ADICIONADA
+  ];
+  final List<String> _employeeTitles = const [
+    'Cotações e Pedidos', 
+    'Produção Diária', 
+    'Controle de Estoque', 
+    'Clientes',
+    'Catálogo de Produtos', // <-- TÍTULO ADICIONADO
+  ];
+  final List<NavigationRailDestination> _employeeDestinations = const [
+    NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), 
+    NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), 
+    NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), 
+    NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')),
+    NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos')), // <-- ITEM DE NAVEGAÇÃO ADICIONADO
+  ];
 
 
   @override
@@ -70,9 +92,7 @@ class _MainScreenState extends State<MainScreen> {
     }
   }
 
-  // ===== FUNÇÃO "SOBRE" ATUALIZADA =====
   void _showAboutDialog(BuildContext context) async {
-    // Busca a informação da versão atual do pacote
     final packageInfo = await PackageInfo.fromPlatform();
     final version = packageInfo.version;
 
@@ -84,7 +104,7 @@ class _MainScreenState extends State<MainScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Versão Instalada: $version', style: TextStyle(fontWeight: FontWeight.bold)),
+            Text('Versão Instalada: $version', style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(height: 20),
             const Text('Desenvolvido por:'),
             const Text('Manthysr', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -108,11 +128,14 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  // ... (o resto do arquivo, incluindo _buildFab e o método build, continua igual)
   Widget? _buildFab(BuildContext fabContext) {
     final bool isAdmin = _userRole == 'admin';
     String? tooltip;
     VoidCallback? onPressed;
+    // Garante que o índice não estoure a lista de títulos de funcionário
+    if (_selectedIndex >= (isAdmin ? _adminTitles.length : _employeeTitles.length)) {
+      _selectedIndex = 0;
+    }
     final currentTitle = (isAdmin ? _adminTitles : _employeeTitles)[_selectedIndex];
 
     switch (currentTitle) {
@@ -130,10 +153,31 @@ class _MainScreenState extends State<MainScreen> {
     }
     return null;
   }
+  
   @override
   Widget build(BuildContext context) {
     final bool isAdmin = _userRole == 'admin';
-    final screens = isAdmin ? _adminScreens : _employeeScreens;
+    
+    // Agora que as listas podem ter tamanhos diferentes, precisamos construir a lista de telas dinamicamente
+    List<Widget> getScreensForRole(String role) {
+      if (role == 'admin') {
+        return _adminScreens.map((screen) {
+          if (screen is ProductsScreen) {
+            return ProductsScreen(userRole: 'admin');
+          }
+          return screen;
+        }).toList();
+      } else {
+        return _employeeScreens.map((screen) {
+          if (screen is ProductsScreen) {
+            return ProductsScreen(userRole: 'employee');
+          }
+          return screen;
+        }).toList();
+      }
+    }
+
+    final screens = getScreensForRole(_userRole);
     final titles = isAdmin ? _adminTitles : _employeeTitles;
     final destinations = isAdmin ? _adminDestinations : _employeeDestinations;
 
@@ -158,86 +202,45 @@ class _MainScreenState extends State<MainScreen> {
           const SizedBox(width: 8),
         ],
       ),
-      body: Stack(
-        children: [
-          Row(
-            children: <Widget>[
-              if (!_isLoadingRole)
-                SingleChildScrollView(
-                  child: ConstrainedBox(
-                    constraints: BoxConstraints(
-                      minHeight: MediaQuery.of(context).size.height - appBarHeight - MediaQuery.of(context).padding.top,
-                    ),
-                    child: IntrinsicHeight(
-                      child: NavigationRail(
-                        selectedIndex: _selectedIndex,
-                        onDestinationSelected: (int index) => setState(() => _selectedIndex = index),
-                        labelType: NavigationRailLabelType.all,
-                        trailing: Expanded(
-                          child: Align(
-                            alignment: Alignment.bottomCenter,
-                            child: Padding(
-                              padding: const EdgeInsets.only(bottom: 8.0),
-                              child: IconButton(
-                                icon: const Icon(Icons.info_outline),
-                                tooltip: 'Sobre o Sistema',
-                                onPressed: () => _showAboutDialog(context),
-                              ),
-                            ),
+      body: Row(
+        children: <Widget>[
+          if (!_isLoadingRole)
+            SingleChildScrollView(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: MediaQuery.of(context).size.height - appBarHeight - MediaQuery.of(context).padding.top,
+                ),
+                child: IntrinsicHeight(
+                  child: NavigationRail(
+                    selectedIndex: _selectedIndex,
+                    onDestinationSelected: (int index) => setState(() => _selectedIndex = index),
+                    labelType: NavigationRailLabelType.all,
+                    trailing: Expanded(
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 8.0),
+                          child: IconButton(
+                            icon: const Icon(Icons.info_outline),
+                            tooltip: 'Sobre o Sistema',
+                            onPressed: () => _showAboutDialog(context),
                           ),
                         ),
-                        destinations: destinations,
                       ),
                     ),
+                    destinations: destinations,
                   ),
-                ),
-              
-              if (!_isLoadingRole)
-                const VerticalDivider(thickness: 1, width: 1),
-              
-              Expanded(
-                child: _isLoadingRole
-                    ? const Center(child: CircularProgressIndicator())
-                    : screens[_selectedIndex],
-              ),
-            ],
-          ),
-
-          Positioned(
-            bottom: 10,
-            right: 10,
-            child: InkWell(
-              onTap: () => launchUrl(Uri.parse('mailto:cmanthysr@gmail.com')),
-              borderRadius: BorderRadius.circular(4),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.05),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: Colors.black.withOpacity(0.1)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      'ProdSys',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey.shade800,
-                      ),
-                    ),
-                    Text(
-                      'Powered by Manthysr',
-                      style: TextStyle(
-                        fontSize: 9,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
                 ),
               ),
             ),
+          
+          if (!_isLoadingRole)
+            const VerticalDivider(thickness: 1, width: 1),
+          
+          Expanded(
+            child: _isLoadingRole
+                ? const Center(child: CircularProgressIndicator())
+                : screens[_selectedIndex],
           ),
         ],
       ),

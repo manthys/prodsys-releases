@@ -1,4 +1,4 @@
-// lib/screens/products_screen.dart (VERSÃO CORRIGIDA COM O LAYOUT ANTIGO)
+// lib/screens/products_screen.dart (VERSÃO FINAL COM PERMISSÕES E LAYOUT ANTIGO CORRIGIDO)
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -8,7 +8,8 @@ import '../services/firestore_service.dart';
 import '../widgets/product_dialog.dart';
 
 class ProductsScreen extends StatefulWidget {
-  const ProductsScreen({super.key});
+  final String userRole;
+  const ProductsScreen({super.key, this.userRole = 'employee'});
 
   @override
   State<ProductsScreen> createState() => _ProductsScreenState();
@@ -124,14 +125,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   return const Center(child: Text('Nenhum produto encontrado com o termo buscado.'));
                 }
 
-                // ##### ESTRUTURA DE LAYOUT CORRIGIDA PARA O DATATABLE ANTIGO #####
                 return ListView(
-                  padding: const EdgeInsets.all(16.0),
+                  padding: const EdgeInsets.symmetric(horizontal: 16.0),
                   children: [
                     SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: DataTable(
-                        columnSpacing: 24, // Ajuste o espaçamento se necessário
+                        columnSpacing: 24,
                         headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
                         columns: const [
                           DataColumn(label: Text('Nome/Descrição', style: TextStyle(fontWeight: FontWeight.bold))),
@@ -153,21 +153,25 @@ class _ProductsScreenState extends State<ProductsScreen> {
                             DataCell(Text(currencyFormatter.format(priceWithoutNota.price))),
                             DataCell(Text(currencyFormatter.format(priceWithNota.price))),
                             DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
-                            DataCell(Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  icon: const Icon(Icons.edit, color: Colors.blue), 
-                                  tooltip: 'Editar', 
-                                  onPressed: () => _showProductDialog(product: product)
-                                ),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline, color: Colors.red),
-                                  tooltip: 'Excluir',
-                                  onPressed: () => _confirmDelete(context, product),
-                                ),
-                              ],
-                            )),
+                            DataCell(
+                              widget.userRole == 'admin'
+                                ? Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        icon: const Icon(Icons.edit, color: Colors.blue), 
+                                        tooltip: 'Editar', 
+                                        onPressed: () => _showProductDialog(product: product)
+                                      ),
+                                      IconButton(
+                                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                        tooltip: 'Excluir',
+                                        onPressed: () => _confirmDelete(context, product),
+                                      ),
+                                    ],
+                                  )
+                                : const SizedBox.shrink(), // Mostra uma célula vazia para funcionários
+                            ),
                           ]);
                         }).toList(),
                       ),
