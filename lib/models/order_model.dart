@@ -1,3 +1,5 @@
+// lib/models/order_model.dart
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'order_item_model.dart';
@@ -17,9 +19,9 @@ enum PaymentStatus { aguardandoSinal, sinalPago, pagoIntegralmente }
 
 class Order {
   final String? id;
-  final String? buyerName; // <-- ADICIONADO
-  final String? buyerPhone; // <-- ADICIONADO
-  final String? buyerEmail; // <-- ADICIONADO
+  final String? buyerName;
+  final String? buyerPhone;
+  final String? buyerEmail;
   final String clientId;
   final String clientName;
   final List<OrderItem> items;
@@ -28,6 +30,7 @@ class Order {
   final Timestamp creationDate;
   final Timestamp? confirmationDate;
   final Timestamp? deliveryDate;
+  final Timestamp? finalizationDate;
   
   final double totalItemsAmount;
   final double shippingCost;
@@ -47,9 +50,9 @@ class Order {
 
   Order({
     this.id,
-    this.buyerName, // <-- ADICIONADO
-    this.buyerPhone, // <-- ADICIONADO
-    this.buyerEmail, // <-- ADICIONADO
+    this.buyerName,
+    this.buyerPhone,
+    this.buyerEmail,
     required this.clientId,
     required this.clientName,
     required this.items,
@@ -58,6 +61,7 @@ class Order {
     required this.creationDate,
     this.confirmationDate,
     this.deliveryDate,
+    this.finalizationDate,
     required this.totalItemsAmount,
     this.shippingCost = 0.0,
     this.discount = 0.0,
@@ -75,19 +79,19 @@ class Order {
   double get amountPaid => paymentDistributions.fold(0.0, (sum, item) => sum + item.amount);
 
   Order copyWith({
-    String? buyerName, // <-- ADICIONADO
-    String? buyerPhone, // <-- ADICIONADO
-    String? buyerEmail, // <-- ADICIONADO
+    String? buyerName,
+    String? buyerPhone,
+    String? buyerEmail,
     String? clientId, String? clientName, List<OrderItem>? items, OrderStatus? status, PaymentStatus? paymentStatus,
     double? totalItemsAmount, double? shippingCost, double? discount, double? finalAmount, List<PaymentDistribution>? paymentDistributions,
     String? paymentTerms, String? paymentMethod, String? notes, Address? deliveryAddress,
-    Timestamp? deliveryDate, Timestamp? confirmationDate, List<String>? attachmentUrls,
+    Timestamp? deliveryDate, Timestamp? confirmationDate, Timestamp? finalizationDate, List<String>? attachmentUrls,
   }) {
     return Order(
       id: id,
-      buyerName: buyerName ?? this.buyerName, // <-- ADICIONADO
-      buyerPhone: buyerPhone ?? this.buyerPhone, // <-- ADICIONADO
-      buyerEmail: buyerEmail ?? this.buyerEmail, // <-- ADICIONADO
+      buyerName: buyerName ?? this.buyerName,
+      buyerPhone: buyerPhone ?? this.buyerPhone,
+      buyerEmail: buyerEmail ?? this.buyerEmail,
       clientId: clientId ?? this.clientId,
       clientName: clientName ?? this.clientName,
       items: items ?? this.items,
@@ -96,6 +100,7 @@ class Order {
       creationDate: creationDate,
       confirmationDate: confirmationDate ?? this.confirmationDate,
       deliveryDate: deliveryDate ?? this.deliveryDate,
+      finalizationDate: finalizationDate, // Note: Não usa `?? this.finalizationDate` para permitir zerar o campo
       totalItemsAmount: totalItemsAmount ?? this.totalItemsAmount,
       shippingCost: shippingCost ?? this.shippingCost,
       discount: discount ?? this.discount,
@@ -114,9 +119,9 @@ class Order {
   Order duplicateAsQuote({required User currentUser}) {
     return Order(
       id: null,
-      buyerName: buyerName, // <-- ADICIONADO
-      buyerPhone: buyerPhone, // <-- ADICIONADO
-      buyerEmail: buyerEmail, // <-- ADICIONADO
+      buyerName: buyerName,
+      buyerPhone: buyerPhone,
+      buyerEmail: buyerEmail,
       clientId: clientId,
       clientName: clientName,
       items: items,
@@ -125,6 +130,7 @@ class Order {
       creationDate: Timestamp.now(),
       confirmationDate: null,
       deliveryDate: null,
+      finalizationDate: null,
       totalItemsAmount: totalItemsAmount,
       shippingCost: shippingCost,
       discount: 0,
@@ -142,12 +148,12 @@ class Order {
 
   Map<String, dynamic> toJson() {
     return {
-      'buyerName': buyerName, // <-- ADICIONADO
-      'buyerPhone': buyerPhone, // <-- ADICIONADO
-      'buyerEmail': buyerEmail, // <-- ADICIONADO
+      'buyerName': buyerName,
+      'buyerPhone': buyerPhone,
+      'buyerEmail': buyerEmail,
       'clientId': clientId, 'clientName': clientName, 'items': items.map((item) => item.toJson()).toList(),
       'status': status.name, 'paymentStatus': paymentStatus.name, 'creationDate': creationDate,
-      'confirmationDate': confirmationDate, 'deliveryDate': deliveryDate, 'totalItemsAmount': totalItemsAmount,
+      'confirmationDate': confirmationDate, 'deliveryDate': deliveryDate, 'finalizationDate': finalizationDate, 'totalItemsAmount': totalItemsAmount,
       'shippingCost': shippingCost, 'discount': discount, 'finalAmount': finalAmount,
       'paymentDistributions': paymentDistributions.map((pd) => pd.toJson()).toList(),
       'paymentTerms': paymentTerms, 'paymentMethod': paymentMethod,
@@ -170,9 +176,9 @@ class Order {
 
     return Order(
       id: documentId,
-      buyerName: data['buyerName'], // <-- ADICIONADO
-      buyerPhone: data['buyerPhone'], // <-- ADICIONADO
-      buyerEmail: data['buyerEmail'], // <-- ADICIONADO
+      buyerName: data['buyerName'],
+      buyerPhone: data['buyerPhone'],
+      buyerEmail: data['buyerEmail'],
       clientId: data['clientId'] ?? '',
       clientName: data['clientName'] ?? '',
       items: itemsList,
@@ -181,6 +187,7 @@ class Order {
       creationDate: data['creationDate'] ?? Timestamp.now(),
       confirmationDate: data['confirmationDate'],
       deliveryDate: data['deliveryDate'],
+      finalizationDate: data['finalizationDate'],
       totalItemsAmount: (data['totalItemsAmount'] ?? 0.0).toDouble(),
       shippingCost: (data['shippingCost'] ?? 0.0).toDouble(),
       discount: (data['discount'] ?? 0.0).toDouble(),

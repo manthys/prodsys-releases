@@ -73,7 +73,66 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     _simulator = ProductionSimulator(_firestoreService);
     _loadInitialData();
   }
-  
+   Future<void> _triggerSmartAllocation(Order order) async {
+    final dateToConfirm = _recalculatedDeliveryDate ?? order.deliveryDate?.toDate() ?? DateTime.now();
+    if (!mounted) return;
+
+    final groupedStock = await _firestoreService.findAvailableStockForOrder(order);
+    if (!mounted) return;
+
+    final allOrders = await _firestoreService.getOrdersStream().first;
+    if (!mounted) return;
+
+    List<StockItem> chosenItems = [];
+    if (groupedStock.stockByOrderId.isNotEmpty) {
+      final List<StockItem>? result = await showDialog<List<StockItem>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => _AllocationDialog(
+          groupedStock: groupedStock.stockByOrderId,
+          allOrders: allOrders,
+          neededItems: order.items,
+        ),
+      );
+      if (result == null) {
+        _showSnackBar('Alocação cancelada pelo usuário. Os itens serão produzidos do zero.', isError: true);
+        // Se cancelou, continua o processo com a lista de `chosenItems` vazia.
+      } else {
+        chosenItems = result;
+      }
+    }
+
+    await _processOrderProduction(order, chosenItems, dateToConfirm);
+  }
+
+  // NOVA FUNÇÃO PARA PROCESSAR A PRODUÇÃO (EXTRAÍDA DE _confirmInitialPayment)
+  Future<void> _processOrderProduction(Order order, List<StockItem> chosenItems, DateTime newEstimatedDate) async {
+    setState(() => _isUploading = true);
+
+    try {
+      // Só atualiza o status se for um pedido novo
+      if (order.status == OrderStatus.pedido) {
+        final dataToUpdate = {
+          'status': OrderStatus.emFabricacao.name,
+          'confirmationDate': Timestamp.now(),
+          'deliveryDate': Timestamp.fromDate(newEstimatedDate),
+        };
+        await _firestoreService.updateOrderPayment(order.id!, dataToUpdate);
+      }
+      
+      final updatedOrder = await _firestoreService.getOrderById(order.id!);
+      if (updatedOrder == null) throw Exception("Pedido não encontrado após atualização.");
+
+      await _firestoreService.processSmartAllocationForOrder(updatedOrder, chosenItems);
+
+      _showSnackBar('Itens enviados para produção/alocados com sucesso!');
+      _reloadOrder();
+    } catch (e) {
+      _showSnackBar('Erro no processo: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isUploading = false);
+    }
+  }
   Future<void> _loadInitialData() async {
     setState(() => _isLoading = true);
     
@@ -189,8 +248,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     try {
       final companySettings = await _firestoreService.getCompanySettings();
       final client = await _firestoreService.getClientById(_currentOrder.clientId);
-      if (client != null) await _orderPdfService.generateAndShowPdf(_currentOrder, client, companySettings);
-      else _showSnackBar('Erro: Cliente não encontrado.', isError: true);
+      if (client != null) {
+        await _orderPdfService.generateAndShowPdf(_currentOrder, client, companySettings);
+      } else {
+        _showSnackBar('Erro: Cliente não encontrado.', isError: true);
+      }
     } catch (e) {
       _showSnackBar('Erro ao gerar PDF do Pedido: $e', isError: true);
     } finally {
@@ -360,36 +422,50 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
+
   Future<void> _confirmInitialPayment() async {
-    final dateToConfirm = _recalculatedDeliveryDate ?? _currentOrder.deliveryDate?.toDate() ?? DateTime.now();
-    if (!mounted) return;
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => PaymentConfirmationDialog(totalAmount: _currentOrder.finalAmount),
+    );
 
-    final groupedStock = await _firestoreService.findAvailableStockForOrder(_currentOrder);
-    if (!mounted) return;
+    if (result == null) return;
 
-    final allOrders = await _firestoreService.getOrdersStream().first;
-    if (!mounted) return;
-
-    List<StockItem> chosenItems = [];
-    if (groupedStock.stockByOrderId.isNotEmpty) {
-      final List<StockItem>? result = await showDialog<List<StockItem>>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => _AllocationDialog(
-          groupedStock: groupedStock.stockByOrderId,
-          allOrders: allOrders,
-          neededItems: _currentOrder.items,
-        ),
-      );
-      if (result == null) {
-        _showSnackBar('Alocação cancelada pelo usuário.', isError: true);
-        return;
+    setState(() => _isUploading = true);
+    try {
+      final double amountToConfirm = result['amount'];
+      final List<PaymentDistribution> distributions = result['distributions'];
+      final PlatformFile? proof = result['proof'];
+      
+      PaymentStatus newPaymentStatus;
+      if ((_currentOrder.amountPaid + amountToConfirm) >= _currentOrder.finalAmount) {
+        newPaymentStatus = PaymentStatus.pagoIntegralmente;
+      } else if (amountToConfirm > 0) {
+        newPaymentStatus = PaymentStatus.sinalPago;
+      } else {
+        newPaymentStatus = _currentOrder.paymentStatus;
       }
-      chosenItems = result;
-    }
+      final updatedDistributions = [..._currentOrder.paymentDistributions, ...distributions];
+      
+      final Map<String, dynamic> paymentData = {
+        'paymentDistributions': updatedDistributions.map((d) => d.toJson()).toList(),
+        'paymentStatus': newPaymentStatus.name,
+      };
+      await _firestoreService.updateOrderPayment(_currentOrder.id!, paymentData);
+      
+      if (proof != null) {
+        await _uploadProof(proof);
+      }
 
-    if(mounted) {
-      _showUnifiedPaymentDialog(chosenItems, dateToConfirm);
+      final updatedOrder = await _firestoreService.getOrderById(_currentOrder.id!);
+      if (updatedOrder != null) {
+        await _triggerSmartAllocation(updatedOrder);
+      }
+    } catch (e) {
+       _showSnackBar('Erro ao confirmar pagamento: $e', isError: true);
+    } finally {
+      // O `setState` e `reload` já acontecem dentro de `_triggerSmartAllocation`
+      if(mounted) setState(() => _isUploading = false);
     }
   }
   
@@ -572,9 +648,25 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
-  void _navigateToEditScreen() async {
-    final result = await Navigator.of(context).push<Order>(MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: _currentOrder)));
-    if (result != null && mounted) setState(() => _currentOrder = result);
+   void _navigateToEditScreen() async {
+    final originalStatus = _currentOrder.status;
+
+    final result = await Navigator.of(context).push<Order>(
+      MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: _currentOrder))
+    );
+
+    if (result != null) {
+      // VERIFICA SE UM PEDIDO FINALIZADO FOI REABERTO
+      if (originalStatus == OrderStatus.finalizado && (result.status == OrderStatus.emFabricacao || result.status == OrderStatus.aguardandoEntrega)) {
+        setState(() { _currentOrder = result; });
+        _showSnackBar('Pedido reaberto. Verificando estoque para alocação...');
+        await _triggerSmartAllocation(result);
+      } else {
+        // Apenas recarrega os dados para outros casos
+         setState(() { _currentOrder = result; });
+        _reloadOrder();
+      }
+    }
   }
 
   void _duplicateOrder() {
@@ -1056,7 +1148,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     ],
                   ),
                 );
-              }).toList(),
+              }),
             ],
           ),
         ),

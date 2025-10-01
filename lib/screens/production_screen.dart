@@ -202,7 +202,7 @@ class _ProductionScreenState extends State<ProductionScreen> {
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar')),
             ElevatedButton(
-              onPressed: () async {
+              onPressed: () async { // <-- Função agora é async
                 int qtyProduced = int.tryParse(qtyController.text) ?? 0;
                 if (qtyProduced <= 0) return;
                 
@@ -219,10 +219,13 @@ class _ProductionScreenState extends State<ProductionScreen> {
                   );
                 } else {
                   final itemsToLaunch = planItem.sourceItems.take(qtyProduced).toList();
+                  
+                  // =================================================================
+                  // AWAIT ADICIONADO AQUI
+                  // =================================================================
                   await _firestoreService.launchProductionRun(itemsToLaunch);
+                  
                   if (planItem.sourceItems.first.orderId != null) {
-                    // ##### CORREÇÃO APLICADA AQUI #####
-                    // Chamando a nova função unificada e correta
                     await _firestoreService.checkIfOrderIsFullyCompleted(planItem.sourceItems.first.orderId!);
                   }
                 }

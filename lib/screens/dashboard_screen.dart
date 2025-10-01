@@ -41,7 +41,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // ##### NOVA FUNÇÃO PARA MOSTRAR OS PEDIDOS FINALIZADOS #####
-  void _showFinalizedOrdersDialog(List<Order> finalizedOrders, DateTime startDate, DateTime endDate) {
+   void _showFinalizedOrdersDialog(List<Order> finalizedOrders, DateTime startDate, DateTime endDate) {
     showDialog(
       context: context,
       builder: (context) {
@@ -55,13 +55,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
               itemBuilder: (context, index) {
                 final order = finalizedOrders[index];
                 final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? 'N/A';
+                // USA A NOVA DATA DE FINALIZAÇÃO CORRETA
+                final dateToShow = order.finalizationDate ?? order.creationDate;
                 return Card(
                   child: ListTile(
                     title: Text('${order.clientName} - Pedido #$orderIdShort'),
-                    subtitle: Text('Finalizado em: ${DateFormat('dd/MM/yyyy').format(order.creationDate.toDate())}'),
+                    subtitle: Text('Finalizado em: ${DateFormat('dd/MM/yyyy').format(dateToShow.toDate())}'),
                     trailing: Text(NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$').format(order.finalAmount)),
                     onTap: () {
-                      Navigator.of(context).pop(); // Fecha o diálogo
+                      Navigator.of(context).pop();
                       Navigator.of(context).push(
                         MaterialPageRoute(
                           builder: (context) => OrderDetailsScreen(order: order),
@@ -84,28 +86,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  @override
+   @override
   Widget build(BuildContext context) {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     
     return Scaffold(
       appBar: AppBar(
-        title: Text('Dashboard: ${DateFormat('dd/MM/yy').format(_startDate)} - ${DateFormat('dd/MM/yy').format(_endDate)}'),
+        title: Flexible(
+          child: Text(
+            'Dashboard: ${DateFormat('dd/MM/yy').format(_startDate)} - ${DateFormat('dd/MM/yy').format(_endDate)}',
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
         actions: [IconButton(icon: const Icon(Icons.calendar_today), onPressed: _selectDateRange)],
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: StreamBuilder<List<dynamic>>(
-        stream: Rx.combineLatest2(
+        stream: Rx.combineLatest3(
           _firestoreService.getOperationalOrdersStream(), 
-          _firestoreService.getDashboardStream(_startDate, _endDate), 
-          (List<Order> operationalOrders, Map<String, dynamic> financialData) => [operationalOrders, financialData]
+          _firestoreService.getDashboardStream(_startDate, _endDate),
+          _firestoreService.getFinalizedOrdersStream(_startDate, _endDate),
+          (List<Order> opOrders, Map<String, dynamic> financialData, List<Order> finalizedOrders) => [opOrders, financialData, finalizedOrders]
         ),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) {
-            return Center(child: Text('Erro ao carregar dados: ${snapshot.error}'));
+            debugPrint("ERRO NO STREAM DA DASHBOARD: ${snapshot.error}");
+            return Center(child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Text('Erro ao carregar dados. Verifique o console para mais detalhes (pode ser necessário criar um índice no Firestore).', textAlign: TextAlign.center),
+            ));
           }
           if (!snapshot.hasData || snapshot.data == null) {
             return const Center(child: Text('Nenhum dado encontrado.'));
@@ -113,8 +125,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
           final List<Order> operationalOrders = snapshot.data![0];
           final Map<String, dynamic> financialData = snapshot.data![1];
-          
-          final List<Order> ordersForFinance = financialData['orders'];
+          final List<Order> finalizedOrdersForRevenue = snapshot.data![2];
+
+          final List<Order> ordersForCashflow = financialData['orders'];
           final List<Expense> expenses = financialData['expenses'];
 
           final quotesCount = operationalOrders.where((o) => o.status == OrderStatus.cotacao).length;
@@ -122,11 +135,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           final inProductionCount = operationalOrders.where((o) => o.status == OrderStatus.emFabricacao).length;
           final readyForDeliveryCount = operationalOrders.where((o) => o.status == OrderStatus.aguardandoEntrega).length;
           
-          final finalizedOrders = ordersForFinance.where((order) => order.status == OrderStatus.finalizado).toList();
-          final double totalRevenue = finalizedOrders.fold(0.0, (sum, order) => sum + order.finalAmount);
+          final double totalRevenue = finalizedOrdersForRevenue.fold(0.0, (sum, order) => sum + order.finalAmount);
           
           final Map<String, double> finalizedRevenueByRecipient = {};
-          for (final order in finalizedOrders) {
+          for (final order in finalizedOrdersForRevenue) {
             for (final payment in order.paymentDistributions) {
               finalizedRevenueByRecipient.update(
                 payment.recipient,
@@ -137,7 +149,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           }
           
           final Map<String, double> cashInflowByRecipient = {};
-          final validOrdersForCashflow = ordersForFinance.where((o) => 
+          final validOrdersForCashflow = ordersForCashflow.where((o) => 
               o.status != OrderStatus.cancelado && 
               o.status != OrderStatus.cotacao &&
               o.status != OrderStatus.pedido
@@ -177,9 +189,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
               Text('Resumo Financeiro (Período Selecionado)', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 8),
               
-              // ##### CARD DE FATURAMENTO AGORA É CLICÁVEL #####
               InkWell(
-                onTap: () => _showFinalizedOrdersDialog(finalizedOrders, _startDate, _endDate),
+                onTap: () => _showFinalizedOrdersDialog(finalizedOrdersForRevenue, _startDate, _endDate),
                 child: _buildSummaryCard(
                   title: 'Faturamento (Pedidos Finalizados)', 
                   value: currencyFormatter.format(totalRevenue), 
@@ -314,7 +325,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                 ),
               );
-            }).toList(),
+            }),
           ],
         ),
       ),
