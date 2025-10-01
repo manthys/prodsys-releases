@@ -92,11 +92,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     
     return Scaffold(
       appBar: AppBar(
-        title: Flexible(
-          child: Text(
-            'Dashboard: ${DateFormat('dd/MM/yy').format(_startDate)} - ${DateFormat('dd/MM/yy').format(_endDate)}',
-            overflow: TextOverflow.ellipsis,
-          ),
+        // =================================================================
+        // CORREÇÃO DO OVERFLOW APLICADA AQUI (REMOVENDO O 'Flexible')
+        // =================================================================
+        title: Text(
+          'Dashboard: ${DateFormat('dd/MM/yy').format(_startDate)} - ${DateFormat('dd/MM/yy').format(_endDate)}',
+          overflow: TextOverflow.ellipsis, // Esta propriedade já previne o overflow do texto
         ),
         actions: [IconButton(icon: const Icon(Icons.calendar_today), onPressed: _selectDateRange)],
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
