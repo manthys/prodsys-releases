@@ -16,8 +16,13 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:auto_updater/auto_updater.dart';
 import 'package:version/version.dart';
 
+import 'package:intl/intl.dart';
+import 'package:intl/date_symbol_data_local.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting('pt_BR', null);
+  Intl.defaultLocale = 'pt_BR';
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
