@@ -608,7 +608,7 @@ class _FilterDialogState extends State<_FilterDialog> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             DropdownButtonFormField<Product>(
-              value: _selectedProduct,
+              initialValue: _selectedProduct,
               hint: const Text('Todos os produtos'),
               isExpanded: true,
               items: widget.allProducts.map((product) => DropdownMenuItem(

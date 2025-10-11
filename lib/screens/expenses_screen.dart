@@ -106,8 +106,8 @@ class ExpensesScreen extends StatelessWidget {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => showExpenseDialog(),
-        child: const Icon(Icons.add),
         tooltip: 'Nova Despesa',
+        child: const Icon(Icons.add),
       ),
     );
   }

@@ -154,7 +154,7 @@ class _PaymentDistributionDialogState extends State<PaymentDistributionDialog> {
             Expanded(
               flex: 3,
               child: DropdownButtonFormField<String>(
-                value: _distributions[index].recipient,
+                initialValue: _distributions[index].recipient,
                 items: _recipients.map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
                 onChanged: (value) {
                   if (value != null) {

@@ -1,4 +1,4 @@
-// lib/screens/orders_screen.dart
+// lib/screens/orders_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -155,6 +155,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: false, // Remove o botão de voltar automático
         title: TabBar(
           controller: _tabController,
           tabs: const [
@@ -182,7 +183,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: 'Buscar por cliente ou ID...',
+                hintText: 'Buscar por cliente, ID ou comprador...',
                 prefixIcon: const Icon(Icons.search),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
@@ -224,8 +225,15 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                 List<Order> filteredOrders = allOrders.where((order) {
                   final query = _searchTerm.toLowerCase();
                   final orderIdShort = order.id?.substring(0, 6).toUpperCase() ?? '';
+                  
+                  // =================================================================
+                  // 1. ADICIONADO NOME DO COMPRADOR NA LÓGICA DE BUSCA
+                  // =================================================================
+                  final buyerName = order.buyerName?.toLowerCase() ?? '';
+
                   return order.clientName.toLowerCase().contains(query) ||
-                         orderIdShort.toLowerCase().contains(query);
+                        orderIdShort.toLowerCase().contains(query) ||
+                        buyerName.contains(query);
                 }).toList();
 
                 if (_filterByPendingRefund) {
@@ -258,7 +266,7 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
     if (orders.isEmpty) {
       return const Center(
         child: Padding(
-          padding: const EdgeInsets.all(16.0),
+          padding: EdgeInsets.all(16.0),
           child: Text(
             'Nenhum pedido encontrado com os filtros aplicados.',
             textAlign: TextAlign.center,
@@ -298,13 +306,22 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
               '${order.clientName} - Pedido #$orderIdShort',
               style: const TextStyle(fontWeight: FontWeight.bold)
             ),
+            // =================================================================
+            // 2. EXIBIÇÃO DO NOME DO COMPRADOR NO SUBTÍTULO
+            // =================================================================
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Data: ${DateFormat('dd/MM/yyyy').format(order.creationDate.toDate())}\n'
-                  'Status: ${_getStatusName(order.status)}$paymentInfo',
-                ),
+                Text('Data: ${DateFormat('dd/MM/yyyy').format(order.creationDate.toDate())}'),
+                Text('Status: ${_getStatusName(order.status)}$paymentInfo'),
+                if (order.buyerName != null && order.buyerName!.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2.0),
+                    child: Text(
+                      'Comprador: ${order.buyerName}',
+                      style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
+                    ),
+                  ),
                 if (needsRefund)
                   Padding(
                     padding: const EdgeInsets.only(top: 4.0),
@@ -333,7 +350,6 @@ class _OrdersScreenState extends State<OrdersScreen> with SingleTickerProviderSt
                 setState(() {});
               }
             },
-            isThreeLine: true,
           ),
         );
       },

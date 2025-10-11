@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 import '../models/payment_distribution_model.dart';
-import 'currency_input_formatter.dart';
 import 'payment_distribution_form_part.dart';
 
 class PaymentConfirmationDialog extends StatefulWidget {

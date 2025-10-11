@@ -98,7 +98,7 @@ class _ExpenseDialogState extends State<ExpenseDialog> {
             children: [
               TextFormField(controller: _descriptionController, decoration: const InputDecoration(labelText: 'Descrição'), validator: (v) => v!.isEmpty ? 'Obrigatório' : null),
               TextFormField(controller: _amountController, decoration: const InputDecoration(labelText: 'Valor', prefixText: 'R\$ '), keyboardType: const TextInputType.numberWithOptions(decimal: true), inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'^\d+[,.]?\d{0,2}'))], validator: (v) => double.tryParse(v!.replaceAll(',', '.')) == null ? 'Inválido' : null),
-              DropdownButtonFormField<String>(value: _selectedCategory, items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(), onChanged: (v) => setState(() => _selectedCategory = v!), decoration: const InputDecoration(labelText: 'Categoria')),
+              DropdownButtonFormField<String>(initialValue: _selectedCategory, items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(), onChanged: (v) => setState(() => _selectedCategory = v!), decoration: const InputDecoration(labelText: 'Categoria')),
               ListTile(title: Text('Data: ${DateFormat('dd/MM/yyyy').format(_selectedDate)}'), trailing: const Icon(Icons.calendar_today), onTap: _pickDate),
               const SizedBox(height: 10),
               ElevatedButton.icon(icon: const Icon(Icons.attach_file), label: const Text('Anexar Comprovante'), onPressed: _pickFile),
