@@ -1,4 +1,4 @@
-// lib/services/delivery_pdf_service.dart
+// lib/services/delivery_pdf_service.dart (VERSÃO COMPLETA E CORRIGIDA)
 
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -25,7 +25,6 @@ class DeliveryPdfService {
     final boldFont = await PdfGoogleFonts.robotoBold();
     final theme = pw.ThemeData.withFont(base: font, bold: boldFont);
     
-    // ===== CORREÇÃO AQUI: USANDO pw.MultiPage =====
     pdf.addPage(
       pw.MultiPage(
         theme: theme,
@@ -37,7 +36,7 @@ class DeliveryPdfService {
           return [
             _buildPartyInfoSection(client, order, delivery),
             pw.SizedBox(height: 15),
-            _buildItemsTable(delivery),
+            _buildItemsTable(delivery), // A tabela será construída com a nova ordem
             pw.Spacer(),
             _buildSignatureSection(),
           ];
@@ -48,7 +47,6 @@ class DeliveryPdfService {
     await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save());
   }
 
-  // O resto do arquivo continua exatamente o mesmo da última versão correta.
   pw.Widget _buildHeader(CompanySettings company, Delivery delivery, pw.MemoryImage? logo) {
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
@@ -74,7 +72,7 @@ class DeliveryPdfService {
           crossAxisAlignment: pw.CrossAxisAlignment.end,
           children: [
             pw.Text('NOTA DE ENTREGA', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
-            pw.Text('Data: ${DateFormat('dd/MM/yyyy').format(delivery.deliveryDate.toDate())}', style: const pw.TextStyle(fontSize: 9)),
+            pw.Text('Data: ${DateFormat('dd/MM/yyyy HH:mm').format(delivery.deliveryDate.toDate())}', style: const pw.TextStyle(fontSize: 9)), // Adicionado Hora
           ]
         )
       ]
@@ -162,16 +160,22 @@ class DeliveryPdfService {
     );
   }
   
+  // =================================================================
+  // FUNÇÃO DA TABELA DE ITENS MODIFICADA AQUI
+  // =================================================================
   pw.Widget _buildItemsTable(Delivery delivery) {
-    final headers = ['N.', 'SKU', 'Item', 'Qtd.'];
+    // 1. Ordem dos cabeçalhos alterada
+    final headers = ['N.', 'SKU', 'Qtd.', 'Item']; 
+    
+    // 2. Ordem dos dados alterada para corresponder aos cabeçalhos
     final data = delivery.items.asMap().entries.map((entry) {
       final index = entry.key + 1;
       final item = entry.value;
       return [
         index.toString(),
         item.sku,
-        item.productName,
-        '${item.quantity} Unidades',
+        '${item.quantity} Un.', // Coluna Qtd. agora é a terceira
+        item.productName,      // Coluna Item agora é a quarta
       ];
     }).toList();
     
@@ -180,8 +184,19 @@ class DeliveryPdfService {
       headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
       headerCellDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
       cellStyle: const pw.TextStyle(fontSize: 9),
+      // 3. Alinhamentos ajustados para a nova ordem
       cellAlignments: {
-        0: pw.Alignment.center, 1: pw.Alignment.centerLeft, 2: pw.Alignment.centerLeft, 3: pw.Alignment.center,
+        0: pw.Alignment.center,     // N.
+        1: pw.Alignment.centerLeft, // SKU
+        2: pw.Alignment.center,     // Qtd.
+        3: pw.Alignment.centerLeft, // Item
+      },
+      // 4. Larguras (opcional, mas recomendado para bom espaçamento)
+      columnWidths: {
+        0: const pw.FixedColumnWidth(25),  // N.
+        1: const pw.FlexColumnWidth(1.5),  // SKU
+        2: const pw.FixedColumnWidth(40),  // Qtd. (largura fixa)
+        3: const pw.FlexColumnWidth(3.0),  // Item (mais espaço)
       },
       headers: headers,
       data: data,
