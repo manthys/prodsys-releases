@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "74273808767",
+    "project_id": "sistema-gestao-dev",
+    "storage_bucket": "sistema-gestao-dev.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:74273808767:android:11ec393e5edf8f609b7a4a",
+        "android_client_info": {
+          "package_name": "com.example.gestao_producao"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAaCq3xhkJUMB33Ma7iBiKYqgZuY4ww9QE"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

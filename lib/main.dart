@@ -3,12 +3,16 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
-import 'firebase_options.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
 import 'services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+// Importa o helper de plataforma
+import 'package:flutter/foundation.dart' show kReleaseMode;
 
+// Importa os DOIS arquivos de configuração
+import 'firebase_options_dev.dart' as dev_options;
+import 'firebase_options_prod.dart' as prod_options;
 // Imports para o atualizador
 import 'package:http/http.dart' as http;
 import 'dart:convert';
@@ -21,11 +25,28 @@ import 'package:intl/date_symbol_data_local.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
   await initializeDateFormatting('pt_BR', null);
   Intl.defaultLocale = 'pt_BR';
+
+  // =================================================================
+  // LÓGICA DE SELEÇÃO DE AMBIENTE
+  // =================================================================
+  FirebaseOptions options;
+  if (kReleaseMode) {
+    // Modo RELEASE (programa instalado no cliente)
+    options = prod_options.DefaultFirebaseOptions.currentPlatform;
+    print("Iniciando em MODO DE PRODUÇÃO.");
+  } else {
+    // Modo DEBUG (você rodando no VS Code)
+    options = dev_options.DefaultFirebaseOptions.currentPlatform;
+    print("Iniciou em MODO DE DESENVOLVIMENTO.");
+  }
+  
   await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
+    options: options, // Passa as opções corretas
   );
+  
   runApp(const MyApp());
 }
 

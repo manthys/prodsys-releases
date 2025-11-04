@@ -43,3 +43,5 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+# Ignora o arquivo de configuração gerado automaticamente
+/lib/firebase_options.dart
