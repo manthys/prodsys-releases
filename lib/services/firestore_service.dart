@@ -20,8 +20,6 @@ import '../models/mold_model.dart';
 import '../models/payment_distribution_model.dart';
 import '../models/stock_item_model.dart';
 import '../models/delivery_model.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import '../models/user_model.dart';
 
 class GroupedStockResult {
   final Map<String, List<StockItem>> stockByOrderId;
@@ -189,7 +187,7 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     Order orderWithRefundNote = orderToReopen;
     if (orderToReopen.finalAmount < originalOrder.amountPaid) {
       double refundAmount = originalOrder.amountPaid - orderToReopen.finalAmount;
-      String newNotes = (orderToReopen.notes ?? '') + '\n[SISTEMA] Valor a devolver ao cliente: R\$${refundAmount.toStringAsFixed(2)}.';
+      String newNotes = '${orderToReopen.notes ?? ''}\n[SISTEMA] Valor a devolver ao cliente: R\$${refundAmount.toStringAsFixed(2)}.';
       orderWithRefundNote = orderToReopen.copyWith(notes: newNotes);
     }
     await updateActiveOrder(originalOrder, orderWithRefundNote);
@@ -505,10 +503,29 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     await batch.commit();
     await checkIfOrderIsFullyCompleted(orderId);
   }
-  Future<void> confirmFinalPaymentAndUpdateStatus(String orderId, List<PaymentDistribution> distributions) async {
+  Future<void> confirmFinalPaymentAndUpdateStatus(String orderId, List<PaymentDistribution> newDistributions) async {
     final order = await getOrderById(orderId);
     if (order == null) return;
-    await _db.collection('orders').doc(orderId).update({'paymentDistributions': distributions.map((d) => d.toJson()).toList(), 'paymentStatus': PaymentStatus.pagoIntegralmente.name});
+    
+    // Calcula o novo valor total pago somando todas as distribuições
+    final double newTotalPaid = newDistributions.fold(0.0, (sum, item) => sum + item.amount);
+
+    PaymentStatus newPaymentStatus;
+    // Compara o total pago com o valor final do pedido
+    if (newTotalPaid >= order.finalAmount) {
+      newPaymentStatus = PaymentStatus.pagoIntegralmente;
+    } else if (newTotalPaid > 0) {
+      newPaymentStatus = PaymentStatus.sinalPago; // Continua como "pago parcialmente"
+    } else {
+      newPaymentStatus = PaymentStatus.aguardandoSinal; // Fallback
+    }
+    
+    await _db.collection('orders').doc(orderId).update({
+      'paymentDistributions': newDistributions.map((d) => d.toJson()).toList(),
+      'paymentStatus': newPaymentStatus.name, // <-- USA O NOVO STATUS CORRETO
+    });
+    
+    // Agora o checkIfOrderIsFullyCompleted vai funcionar, pois lerá o status de pagamento correto
     await checkIfOrderIsFullyCompleted(orderId);
   }
   Future<void> updateOrderPaymentDistribution(String orderId, List<PaymentDistribution> distributions) {
