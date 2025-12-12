@@ -10,6 +10,8 @@ class Product {
   final double clientLogoPrice;
   final List<PriceVariation> priceVariations;
   final bool isCompanyLogoProduct;
+  // NOVO CAMPO: Tempo de ciclo em segundos (padrão 30s se não informado)
+  final int cycleTimeSeconds; 
 
   Product({
     this.id,
@@ -19,6 +21,7 @@ class Product {
     required this.clientLogoPrice,
     required this.priceVariations,
     this.isCompanyLogoProduct = false,
+    this.cycleTimeSeconds = 30, 
   });
 
   double get basePrice {
@@ -36,6 +39,7 @@ class Product {
       'clientLogoPrice': clientLogoPrice,
       'priceVariations': priceVariations.map((v) => v.toJson()).toList(),
       'isCompanyLogoProduct': isCompanyLogoProduct,
+      'cycleTimeSeconds': cycleTimeSeconds,
     };
   }
 
@@ -65,6 +69,7 @@ class Product {
       clientLogoPrice: (data['clientLogoPrice'] as num? ?? 0).toDouble(),
       priceVariations: variations,
       isCompanyLogoProduct: isCompanyLogo,
+      cycleTimeSeconds: data['cycleTimeSeconds'] ?? 30,
     );
   }
 }

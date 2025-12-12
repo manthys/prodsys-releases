@@ -28,7 +28,7 @@ class GroupedStockResult {
 
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
-
+  
   // =================================================================
   // NOVA FUNÇÃO PARA CORRIGIR SUPERPRODUÇÃO SEM REPOR ESTOQUE
   // =================================================================
@@ -370,8 +370,8 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     }
     await batch.commit();
   }
-  Stream<List<Client>> getClientsStream() => _db.collection('clients').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Client.fromFirestore(doc.data(), doc.id)).toList());
-  Future<void> addClient(Client client) => _db.collection('clients').add(client.toJson());
+ Stream<List<Client>> getClientsStream() => _db.collection('clients').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Client.fromFirestore(doc.data(), doc.id)).toList());
+  Future<DocumentReference> addClient(Client client) => _db.collection('clients').add(client.toJson());
   Future<void> updateClient(Client client) => _db.collection('clients').doc(client.id).update(client.toJson());
   Future<void> deleteClient(String clientId) => _db.collection('clients').doc(clientId).delete();
   Future<Client?> getClientById(String clientId) async {

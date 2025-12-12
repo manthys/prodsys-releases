@@ -1,4 +1,5 @@
-// lib/models/client_model.dart
+// lib/models/client_model.dart (VERSÃO COMPLETA E CORRIGIDA)
+
 import 'address_model.dart';
 
 class Client {
@@ -22,6 +23,31 @@ class Client {
     required this.deliveryAddress,
   });
 
+  // =================================================================
+  // MÉTODO "copyWith" QUE ESTAVA FALTANDO
+  // =================================================================
+  Client copyWith({
+    String? id,
+    String? name,
+    String? cnpj,
+    String? ie,
+    String? phone,
+    String? email,
+    Address? billingAddress,
+    Address? deliveryAddress,
+  }) {
+    return Client(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      cnpj: cnpj ?? this.cnpj,
+      ie: ie ?? this.ie,
+      phone: phone ?? this.phone,
+      email: email ?? this.email,
+      billingAddress: billingAddress ?? this.billingAddress,
+      deliveryAddress: deliveryAddress ?? this.deliveryAddress,
+    );
+  }
+
   Map<String, dynamic> toJson() {
     return {
       'name': name,
@@ -38,10 +64,10 @@ class Client {
     return Client(
       id: documentId,
       name: data['name'] ?? '',
-      cnpj: data['cnpj'],
-      ie: data['ie'],
+      cnpj: data['cnpj'] ?? '',
+      ie: data['ie'] ?? '',
       phone: data['phone'] ?? '',
-      email: data['email'],
+      email: data['email'] ?? '',
       billingAddress: Address.fromJson(data['billingAddress']),
       deliveryAddress: Address.fromJson(data['deliveryAddress']),
     );
