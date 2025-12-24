@@ -1,4 +1,4 @@
-// lib/services/firestore_service.dart (VERSÃO COMPLETA E CORRIGIDA)
+// lib/services/firestore_service.dart
 
 import 'dart:async';
 import 'dart:convert';
@@ -29,14 +29,11 @@ class GroupedStockResult {
 class FirestoreService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   
-  // =================================================================
-  // NOVA FUNÇÃO PARA CORRIGIR SUPERPRODUÇÃO SEM REPOR ESTOQUE
-  // =================================================================
   Future<void> correctStockOverage(StockItem originalItem, int initialQuantity, int newQuantity, String reason) async {
     final batch = _db.batch();
     int difference = initialQuantity - newQuantity;
 
-    if (difference <= 0) return; // Só atua se a quantidade for reduzida
+    if (difference <= 0) return; 
 
     Query query = _db.collection('stock_items')
       .where('productId', isEqualTo: originalItem.productId)
@@ -46,7 +43,6 @@ class FirestoreService {
       
     final itemsToRemoveSnapshot = await query.limit(difference).get();
 
-    // Simplesmente deleta os documentos excedentes
     for (var doc in itemsToRemoveSnapshot.docs) {
       batch.delete(doc.reference);
     }
@@ -58,9 +54,6 @@ class FirestoreService {
     }
   }
   
-  // =================================================================
-  // FUNÇÃO DE AJUSTE POR PERDA RESTAURADA À LÓGICA ORIGINAL
-  // =================================================================
   Future<void> adjustStockQuantity(StockItem originalItem, int initialQuantity, int newQuantity, String reason) async {
     final batch = _db.batch();
     int difference = initialQuantity - newQuantity;
@@ -77,7 +70,6 @@ class FirestoreService {
       batch.delete(doc.reference);
     }
 
-    // Lógica para repor na fila de produção (mantida conforme sua necessidade)
     if (originalItem.orderId != null && (originalItem.status == StockItemStatus.aguardandoProducao || originalItem.status == StockItemStatus.emEstoque)) {
       for (int i = 0; i < difference; i++) {
         final newItem = StockItem(
@@ -119,31 +111,57 @@ class FirestoreService {
     return querySnapshot.docs.length;
   }
 
-    Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
+  // =================================================================
+  // CORREÇÃO CRÍTICA: STATUS RECALCULADO CORRETAMENTE COM DEVOLUÇÕES
+  // =================================================================
+  Future<void> checkIfOrderIsFullyCompleted(String orderId) async {
     final order = await getOrderById(orderId);
     if (order == null) return;
+    
     final ignoredStatuses = [OrderStatus.finalizado, OrderStatus.cancelado];
     if (ignoredStatuses.contains(order.status)) {
       return;
     }
+
     final deliveries = await getDeliveriesForOrderStream(orderId).first;
     final stockItems = await getStockItemsForOrder(orderId);
+    
     bool allItemsDelivered = true;
+
     if (order.items.isEmpty) {
       allItemsDelivered = true;
     } else {
       for (final orderItem in order.items) {
-        int deliveredCount = deliveries.expand((d) => d.items).where((di) => di.productId == orderItem.productId && di.logoType == orderItem.logoType).fold(0, (sum, item) => sum + item.quantity);
+        int deliveredCount = 0;
+        
+        // CORREÇÃO DA MATEMÁTICA DE ENTREGAS
+        for (final delivery in deliveries) {
+          for (final deliveryItem in delivery.items) {
+            if (deliveryItem.productId == orderItem.productId && deliveryItem.logoType == orderItem.logoType) {
+                if (delivery.type == DeliveryType.saida) {
+                    // Soma o que saiu e foi aceito (Saiu - Recusado na hora)
+                    deliveredCount += (deliveryItem.quantity - deliveryItem.returnQuantity);
+                } else if (delivery.type == DeliveryType.devolucao) {
+                    // Subtrai o que foi devolvido posteriormente
+                    deliveredCount -= deliveryItem.quantity;
+                }
+            }
+          }
+        }
+        
         if (deliveredCount < orderItem.quantity) {
           allItemsDelivered = false;
           break;
         }
       }
     }
+
     final isFullyPaid = order.paymentStatus == PaymentStatus.pagoIntegralmente;
     bool hasPendingProduction = stockItems.any((item) => item.status == StockItemStatus.aguardandoProducao);
+    
     OrderStatus newStatus;
     Map<String, dynamic> dataToUpdate = {};
+
     if (allItemsDelivered) {
       if (isFullyPaid) {
         newStatus = OrderStatus.finalizado;
@@ -154,22 +172,27 @@ class FirestoreService {
         newStatus = OrderStatus.aguardandoPagamentoFinal;
       }
     } else {
+      // Se não entregou tudo, volta para o fluxo operacional
       if (order.status == OrderStatus.pedido || order.status == OrderStatus.cotacao) {
         newStatus = order.status;
       } else if (hasPendingProduction) {
         newStatus = OrderStatus.emFabricacao;
       } else {
+        // Se tem item pronto (não está em produção) mas não entregou tudo, é Aguardando Entrega
         newStatus = OrderStatus.aguardandoEntrega;
       }
     }
+
     if (order.status != newStatus) {
       dataToUpdate['status'] = newStatus.name;
     }
+    
     if (dataToUpdate.isNotEmpty) {
       await _db.collection('orders').doc(orderId).update(dataToUpdate);
     }
   }
-Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
+
+  Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     return _db
       .collection('orders')
       .where('status', isEqualTo: OrderStatus.finalizado.name)
@@ -214,8 +237,6 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
         difference = updatedItem.quantity - originalItem.quantity;
       }
       
-      // LÓGICA REVERTIDA: Agora apenas cria a demanda de produção, sem alocar automaticamente.
-      // A UI irá chamar a janela de alocação quando necessário.
       if (difference > 0 && isOperational) {
         for (int i = 0; i < difference; i++) {
           final newStockItem = StockItem(
@@ -229,7 +250,7 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
       }
     }
     
-    // Remover itens (lógica antiga continua correta)
+    // Remover itens
     for (final key in originalItemsMap.keys) {
       final originalItem = originalItemsMap[key]!;
       final updatedItem = updatedItemsMap[key];
@@ -281,8 +302,6 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     await batch.commit();
   }
   
-  // O restante do arquivo continua abaixo...
-  // ... (todas as outras funções que não foram modificadas)
   Future<int> migrateDeliveriesAddLogoType() async {
     final deliveriesSnapshot = await _db.collection('deliveries').get();
     final batch = _db.batch();
@@ -507,25 +526,22 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     final order = await getOrderById(orderId);
     if (order == null) return;
     
-    // Calcula o novo valor total pago somando todas as distribuições
     final double newTotalPaid = newDistributions.fold(0.0, (sum, item) => sum + item.amount);
 
     PaymentStatus newPaymentStatus;
-    // Compara o total pago com o valor final do pedido
     if (newTotalPaid >= order.finalAmount) {
       newPaymentStatus = PaymentStatus.pagoIntegralmente;
     } else if (newTotalPaid > 0) {
-      newPaymentStatus = PaymentStatus.sinalPago; // Continua como "pago parcialmente"
+      newPaymentStatus = PaymentStatus.sinalPago; 
     } else {
-      newPaymentStatus = PaymentStatus.aguardandoSinal; // Fallback
+      newPaymentStatus = PaymentStatus.aguardandoSinal; 
     }
     
     await _db.collection('orders').doc(orderId).update({
       'paymentDistributions': newDistributions.map((d) => d.toJson()).toList(),
-      'paymentStatus': newPaymentStatus.name, // <-- USA O NOVO STATUS CORRETO
+      'paymentStatus': newPaymentStatus.name, 
     });
     
-    // Agora o checkIfOrderIsFullyCompleted vai funcionar, pois lerá o status de pagamento correto
     await checkIfOrderIsFullyCompleted(orderId);
   }
   Future<void> updateOrderPaymentDistribution(String orderId, List<PaymentDistribution> distributions) {
@@ -572,14 +588,22 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     }
     return GroupedStockResult(stockByOrderId: stockByOrderId);
   }
+
   Future<void> processSmartAllocationForOrder(Order forOrder, List<StockItem> chosenItems) async {
-    if (chosenItems.isEmpty) {
-      await _createProductionItemsForOrder(forOrder);
-      return;
-    }
     final stockItemsCollection = _db.collection('stock_items');
     final batch = _db.batch();
+
+    final existingPendingQuery = await stockItemsCollection
+        .where('orderId', isEqualTo: forOrder.id)
+        .where('status', isEqualTo: StockItemStatus.aguardandoProducao.name)
+        .get();
+
+    for (var doc in existingPendingQuery.docs) {
+      batch.delete(doc.reference);
+    }
+
     Map<String, int> neededQtyMap = {for (var item in forOrder.items) '${item.productId}-${item.logoType}': item.quantity};
+
     for (final stockItem in chosenItems) {
       final key = '${stockItem.productId}-${stockItem.logoType}';
       if ((neededQtyMap[key] ?? 0) > 0) {
@@ -606,6 +630,7 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     await batch.commit();
     await checkIfOrderIsFullyCompleted(forOrder.id!);
   }
+
   Future<void> _createProductionItemsForOrder(Order order) async {
     final batch = _db.batch();
     final stockItemsCollection = _db.collection('stock_items');
@@ -690,9 +715,6 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     batch.delete(deliveryRef);
     await batch.commit();
   }
-    // =================================================================
-  // FUNÇÃO DE REPARO ATUALIZADA PARA USAR A DATA DA ÚLTIMA ENTREGA
-  // =================================================================
   Future<int> repairAllFinalizationDates() async {
     final ordersRef = _db.collection('orders');
     final deliveriesRef = _db.collection('deliveries');
@@ -707,7 +729,6 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     for (final doc in finalizedOrdersQuery.docs) {
       final data = doc.data();
       
-      // Procura pela última entrega associada a este pedido
       final lastDeliveryQuery = await deliveriesRef
           .where('orderId', isEqualTo: doc.id)
           .orderBy('deliveryDate', descending: true)
@@ -717,15 +738,12 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
       Timestamp finalizationDateToSet;
 
       if (lastDeliveryQuery.docs.isNotEmpty) {
-        // Se encontrou uma entrega, usa a data dela
         final lastDelivery = lastDeliveryQuery.docs.first.data();
         finalizationDateToSet = lastDelivery['deliveryDate'] as Timestamp;
       } else {
-        // Se não encontrou nenhuma entrega, usa a data de criação como segurança
         finalizationDateToSet = data['creationDate'] as Timestamp;
       }
       
-      // Atualiza o pedido com a data correta
       batch.update(doc.reference, {'finalizationDate': finalizationDateToSet});
       updatedCount++;
     }
@@ -735,5 +753,160 @@ Stream<List<Order>> getFinalizedOrdersStream(DateTime start, DateTime end) {
     }
     
     return updatedCount;
+  }
+
+  // =================================================================
+  // NOVA FUNÇÃO: ATUALIZA A ENTREGA COM DADOS DE DEVOLUÇÃO E RESTAURA ESTOQUE
+  // =================================================================
+  Future<void> confirmDeliveryWithReturns({
+    required String orderId,
+    required String deliveryId,
+    required List<DeliveryItem> itemsWithStatus, // Lista completa com qtd enviada e qtd devolvida
+  }) async {
+    final batch = _db.batch();
+    final deliveryRef = _db.collection('deliveries').doc(deliveryId);
+    
+    batch.update(deliveryRef, {
+      'status': DeliveryStatus.entregue.name,
+      'items': itemsWithStatus.map((e) => e.toJson()).toList()
+    });
+
+    final stockItemsSnapshot = await _db.collection('stock_items')
+        .where('deliveryId', isEqualTo: deliveryId)
+        .get();
+
+    final allDeliveryStockItems = stockItemsSnapshot.docs.map((d) => StockItem.fromFirestore(d.data(), d.id)).toList();
+
+    // Cria uma cópia da lista para ir consumindo as devoluções
+    List<DeliveryItem> pendingReturns = itemsWithStatus.where((i) => i.returnQuantity > 0).map((e) => 
+      // Clona para podermos decrementar o contador localmente sem afetar o objeto original
+      DeliveryItem(
+        productId: e.productId, sku: e.sku, productName: e.productName, 
+        quantity: e.quantity, logoType: e.logoType, 
+        returnQuantity: e.returnQuantity, returnReason: e.returnReason
+      )
+    ).toList();
+
+    for (final stockItem in allDeliveryStockItems) {
+      final returnIndex = pendingReturns.indexWhere((r) => 
+          r.productId == stockItem.productId && 
+          r.logoType == stockItem.logoType && 
+          r.returnQuantity > 0
+      );
+
+      if (returnIndex != -1) {
+        // === ITEM DEVOLVIDO ===
+        // Volta para o estoque do pedido, mas marcado como disponivel
+        final returnInfo = pendingReturns[returnIndex];
+        
+        batch.update(_db.collection('stock_items').doc(stockItem.id), {
+          'status': StockItemStatus.emEstoque.name,
+          'deliveryId': null,
+          'reallocatedFrom': 'Retorno de Entrega: ${returnInfo.returnReason ?? "Sem motivo"}'
+        });
+
+        if (returnInfo.returnQuantity > 1) {
+           pendingReturns[returnIndex] = DeliveryItem(
+             productId: returnInfo.productId, sku: returnInfo.sku, productName: returnInfo.productName, 
+             quantity: returnInfo.quantity, logoType: returnInfo.logoType,
+             returnQuantity: returnInfo.returnQuantity - 1, returnReason: returnInfo.returnReason
+           );
+        } else {
+           pendingReturns.removeAt(returnIndex);
+        }
+
+      } else {
+        // === ITEM ENTREGUE COM SUCESSO ===
+        batch.update(_db.collection('stock_items').doc(stockItem.id), {
+          'status': StockItemStatus.entregue.name
+        });
+      }
+    }
+
+    await batch.commit();
+    await checkIfOrderIsFullyCompleted(orderId);
+  }
+
+  // =================================================================
+  // NOVA LÓGICA CORRETA: CRIA UMA MOVIMENTAÇÃO DE DEVOLUÇÃO SEPARADA
+  // =================================================================
+  Future<void> registerReturnTransaction({
+    required String orderId,
+    required String originalDeliveryId, 
+    required List<DeliveryItem> itemsReturning, 
+    required String clientName,
+    required String userName,
+  }) async {
+    final batch = _db.batch();
+    
+    // 1. Cria o documento de "Entrega" do tipo DEVOLUÇÃO
+    final returnDocRef = _db.collection('deliveries').doc();
+    
+    final returnTransaction = Delivery(
+      id: returnDocRef.id,
+      orderId: orderId,
+      clientName: clientName,
+      deliveryDate: Timestamp.now(), 
+      items: itemsReturning,
+      driverName: 'Cliente/Retorno', 
+      vehiclePlate: '',
+      createdByUserName: userName,
+      status: DeliveryStatus.entregue, 
+      type: DeliveryType.devolucao, // MARCA COMO DEVOLUÇÃO
+    );
+
+    batch.set(returnDocRef, returnTransaction.toJson());
+
+    // 2. Processa o ESTOQUE FÍSICO
+    List<DeliveryItem> pendingReturns = List.from(itemsReturning);
+
+    final deliveredItemsQuery = await _db.collection('stock_items')
+        .where('orderId', isEqualTo: orderId)
+        .where('status', isEqualTo: StockItemStatus.entregue.name)
+        .get();
+        
+    final availableToReturn = deliveredItemsQuery.docs;
+
+    for (var docSnapshot in availableToReturn) {
+      final stockData = docSnapshot.data();
+      final currentProductId = stockData['productId'];
+      final currentLogoType = stockData['logoType'];
+
+      final returnIndex = pendingReturns.indexWhere((r) => 
+          r.productId == currentProductId && 
+          r.logoType == currentLogoType && 
+          r.quantity > 0
+      );
+
+      if (returnIndex != -1) {
+        final returnReq = pendingReturns[returnIndex];
+
+        // === ITEM VOLTA PARA O ESTOQUE DO PEDIDO ===
+        batch.update(docSnapshot.reference, {
+          'status': StockItemStatus.emEstoque.name,
+          'deliveryId': null, 
+          'reallocatedFrom': 'Devolução Pós-Entrega em ${DateFormat('dd/MM').format(DateTime.now())}: ${returnReq.returnReason}'
+        });
+
+        if (returnReq.quantity > 1) {
+           pendingReturns[returnIndex] = DeliveryItem(
+             productId: returnReq.productId, sku: returnReq.sku, productName: returnReq.productName, 
+             quantity: returnReq.quantity - 1, logoType: returnReq.logoType,
+             returnReason: returnReq.returnReason
+           );
+        } else {
+           pendingReturns.removeAt(returnIndex);
+        }
+      }
+      
+      if (pendingReturns.isEmpty) break; 
+    }
+
+    if (pendingReturns.isNotEmpty) {
+      throw Exception("Não foi possível encontrar todos os itens entregues para realizar a devolução. Verifique o status do pedido.");
+    }
+
+    await batch.commit();
+    await checkIfOrderIsFullyCompleted(orderId);
   }
 }

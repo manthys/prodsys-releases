@@ -1,4 +1,4 @@
-// lib/screens/order_details_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
+// lib/screens/order_details_screen.dart
 
 import 'dart:io';
 import 'dart:math';
@@ -7,7 +7,6 @@ import 'package:cloud_firestore/cloud_firestore.dart' hide Order;
 import 'package:file_picker/file_picker.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -17,8 +16,6 @@ import '../models/delivery_model.dart';
 import '../models/order_model.dart';
 import '../models/order_item_model.dart';
 import '../models/stock_item_model.dart';
-import '../models/client_model.dart';
-import '../models/company_settings_model.dart';
 import '../models/delivery_selection_item_model.dart';
 
 // Imports dos serviços
@@ -96,7 +93,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       );
       if (result == null) {
         _showSnackBar('Alocação cancelada pelo usuário. Os itens serão produzidos do zero.', isError: true);
-        // Se cancelou, continua o processo com a lista de `chosenItems` vazia.
       } else {
         chosenItems = result;
       }
@@ -105,12 +101,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     await _processOrderProduction(order, chosenItems, dateToConfirm);
   }
 
-  // NOVA FUNÇÃO PARA PROCESSAR A PRODUÇÃO (EXTRAÍDA DE _confirmInitialPayment)
   Future<void> _processOrderProduction(Order order, List<StockItem> chosenItems, DateTime newEstimatedDate) async {
     setState(() => _isUploading = true);
 
     try {
-      // Só atualiza o status se for um pedido novo
       if (order.status == OrderStatus.pedido) {
         final dataToUpdate = {
           'status': OrderStatus.emFabricacao.name,
@@ -181,6 +175,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
   
+  // =================================================================
+  // LÓGICA DE ALOCAÇÃO (Conta devoluções posteriores)
+  // =================================================================
   List<DeliverySelectionItem> _prepareSelectionItems() {
       if (_stockItemsForOrder == null || _deliveriesForOrder == null) return [];
 
@@ -193,7 +190,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       for (final delivery in _deliveriesForOrder!) {
           for (final deliveredItem in delivery.items) {
               final key = '${deliveredItem.productId}-${deliveredItem.logoType}';
-              alreadyDeliveredCount.update(key, (value) => value + deliveredItem.quantity, ifAbsent: () => deliveredItem.quantity);
+              
+              if (delivery.type == DeliveryType.saida) {
+                 final netOutput = deliveredItem.quantity - deliveredItem.returnQuantity;
+                 alreadyDeliveredCount.update(key, (value) => value + netOutput, ifAbsent: () => netOutput);
+              } else if (delivery.type == DeliveryType.devolucao) {
+                 alreadyDeliveredCount.update(key, (value) => value - deliveredItem.quantity, ifAbsent: () => -deliveredItem.quantity);
+              }
           }
       }
 
@@ -223,6 +226,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       return selectionItems;
   }
 
+  // =================================================================
+  // LÓGICA DE STATUS FINALIZADO (Conta devoluções posteriores)
+  // =================================================================
   bool get _areAllItemsDelivered {
     if (_currentOrder.items.isEmpty) return true;
     if (_deliveriesForOrder == null) return false;
@@ -232,7 +238,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       for (final delivery in _deliveriesForOrder!) {
         for (final deliveryItem in delivery.items) {
           if (deliveryItem.productId == orderItem.productId && deliveryItem.logoType == orderItem.logoType) {
-            deliveredCount += deliveryItem.quantity;
+             if (delivery.type == DeliveryType.saida) {
+                 deliveredCount += (deliveryItem.quantity - deliveryItem.returnQuantity);
+             } else if (delivery.type == DeliveryType.devolucao) {
+                 deliveredCount -= deliveryItem.quantity;
+             }
           }
         }
       }
@@ -351,7 +361,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   void _confirmarExclusao() async {
     final bool? confirmar = await showDialog(context: context, builder: (context) => AlertDialog(title: const Text('Confirmar Exclusão'), content: const Text('Deseja realmente excluir esta cotação? Esta ação não pode ser desfeita.'), actions: [TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Não')), ElevatedButton(onPressed: () => Navigator.of(context).pop(true), style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white), child: const Text('Sim, Excluir'))]));
     if (confirmar == true) {
-      // CORREÇÃO (BUG 3): Usando handleOrderCancellation para garantir a limpeza de itens de estoque órfãos
       await _firestoreService.handleOrderCancellation(_currentOrder.id!);
       if (mounted) Navigator.of(context).pop();
     }
@@ -464,7 +473,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     } catch (e) {
        _showSnackBar('Erro ao confirmar pagamento: $e', isError: true);
     } finally {
-      // O `setState` e `reload` já acontecem dentro de `_triggerSmartAllocation`
       if(mounted) setState(() => _isUploading = false);
     }
   }
@@ -649,21 +657,41 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
    void _navigateToEditScreen() async {
-    final originalStatus = _currentOrder.status;
+    final originalOrder = _currentOrder; 
 
     final result = await Navigator.of(context).push<Order>(
       MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: _currentOrder))
     );
 
     if (result != null) {
-      // VERIFICA SE UM PEDIDO FINALIZADO FOI REABERTO
-      if (originalStatus == OrderStatus.finalizado && (result.status == OrderStatus.emFabricacao || result.status == OrderStatus.aguardandoEntrega)) {
-        setState(() { _currentOrder = result; });
-        _showSnackBar('Pedido reaberto. Verificando estoque para alocação...');
+      setState(() { _currentOrder = result; });
+
+      bool needsAllocation = false;
+      
+      for (var newItem in result.items) {
+        final originalItem = originalOrder.items.firstWhereOrNull(
+          (old) => old.productId == newItem.productId && old.logoType == newItem.logoType
+        );
+
+        if (originalItem == null) {
+          needsAllocation = true;
+          break;
+        } else if (newItem.quantity > originalItem.quantity) {
+          needsAllocation = true;
+          break;
+        }
+      }
+
+      if (originalOrder.status == OrderStatus.finalizado && 
+         (result.status == OrderStatus.emFabricacao || result.status == OrderStatus.aguardandoEntrega)) {
+         needsAllocation = true;
+      }
+
+      if (needsAllocation) {
+        _showSnackBar('Alterações detectadas. Verificando estoque para alocação...');
+        await Future.delayed(const Duration(milliseconds: 500)); 
         await _triggerSmartAllocation(result);
       } else {
-        // Apenas recarrega os dados para outros casos
-         setState(() { _currentOrder = result; });
         _reloadOrder();
       }
     }
@@ -858,7 +886,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       appBar: AppBar(
         title: Text('Detalhes #${_currentOrder.id?.substring(0, 6).toUpperCase() ?? ''}'),
         actions: [
-          // CORREÇÃO (BUG 4): Ícone de duplicar adicionado de volta
           IconButton(icon: const Icon(Icons.copy), tooltip: 'Duplicar como Cotação', onPressed: _duplicateOrder),
           
           if (canAttachProof)
@@ -913,7 +940,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               children: [
                 _buildClientInfoSection(needsRefund: needsRefund, refundAmountString: refundAmountString),
                 const SizedBox(height: 24), 
-                _buildItemsSection(),
+                _buildItemsSection(), // <--- CORRIGIDA AQUI
                 const Divider(), 
                 _buildTotalsSection(), 
                 _buildPaymentDistributionSection(), 
@@ -929,6 +956,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
 
+  // =================================================================
+  // FUNÇÃO RESTAURADA QUE FALTAVA
+  // =================================================================
   Widget _buildClientInfoSection({required bool needsRefund, String? refundAmountString}) {
     final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
     final dateToShow = _recalculatedDeliveryDate ?? _currentOrder.deliveryDate?.toDate();
@@ -951,7 +981,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           ],
         ),
         Text('Criado por: ${_currentOrder.createdByUserName}'), 
-        // ADICIONADO A EXIBIÇÃO DO COMPRADOR
         if (_currentOrder.buyerName != null && _currentOrder.buyerName!.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8.0),
@@ -1034,11 +1063,17 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             for (final delivery in _deliveriesForOrder!) {
               for (final deliveryItem in delivery.items) {
                   if (deliveryItem.productId == orderItem.productId && deliveryItem.logoType == orderItem.logoType) {
-                    deliveredCount += deliveryItem.quantity;
+                    if (delivery.type == DeliveryType.saida) {
+                       deliveredCount += (deliveryItem.quantity - deliveryItem.returnQuantity);
+                    } else if (delivery.type == DeliveryType.devolucao) {
+                       deliveredCount -= deliveryItem.quantity;
+                    }
                 }
               }
             }
           }
+          // Garante que não mostre negativo (não deveria acontecer, mas é segurança)
+          deliveredCount = max(0, deliveredCount);
 
           final inStockCount = max(0, producedCount - deliveredCount);
 
@@ -1072,6 +1107,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
   
+  // ... (MANTENHA OS OUTROS WIDGETS E MÉTODOS IGUAIS)
   Widget _buildTotalsSection() {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final theme = Theme.of(context);
@@ -1372,5 +1408,4 @@ class _AllocationDialogState extends State<_AllocationDialog> {
       ],
     );
   }
-  
 }

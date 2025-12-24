@@ -1,4 +1,4 @@
-// lib/services/delivery_pdf_service.dart (VERSÃO COMPLETA E CORRIGIDA)
+// lib/services/delivery_pdf_service.dart
 
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -36,9 +36,9 @@ class DeliveryPdfService {
           return [
             _buildPartyInfoSection(client, order, delivery),
             pw.SizedBox(height: 15),
-            _buildItemsTable(delivery), // A tabela será construída com a nova ordem
+            _buildItemsTable(delivery),
             pw.Spacer(),
-            _buildSignatureSection(),
+            _buildSignatureSection(delivery.type),
           ];
         },
       ),
@@ -48,6 +48,11 @@ class DeliveryPdfService {
   }
 
   pw.Widget _buildHeader(CompanySettings company, Delivery delivery, pw.MemoryImage? logo) {
+    // TÍTULO DINÂMICO
+    final String title = delivery.type == DeliveryType.devolucao 
+        ? 'COMPROVANTE DE DEVOLUÇÃO' 
+        : 'NOTA DE ENTREGA';
+        
     return pw.Row(
       mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
       children: [
@@ -71,8 +76,8 @@ class DeliveryPdfService {
         pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.end,
           children: [
-            pw.Text('NOTA DE ENTREGA', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14)),
-            pw.Text('Data: ${DateFormat('dd/MM/yyyy HH:mm').format(delivery.deliveryDate.toDate())}', style: const pw.TextStyle(fontSize: 9)), // Adicionado Hora
+            pw.Text(title, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14, color: delivery.type == DeliveryType.devolucao ? PdfColors.red : PdfColors.black)),
+            pw.Text('Data: ${DateFormat('dd/MM/yyyy HH:mm').format(delivery.deliveryDate.toDate())}', style: const pw.TextStyle(fontSize: 9)), 
           ]
         )
       ]
@@ -161,56 +166,122 @@ class DeliveryPdfService {
   }
   
   // =================================================================
-  // FUNÇÃO DA TABELA DE ITENS MODIFICADA AQUI
+  // TABELA ADAPTATIVA
   // =================================================================
   pw.Widget _buildItemsTable(Delivery delivery) {
-    // 1. Ordem dos cabeçalhos alterada
-    final headers = ['N.', 'SKU', 'Qtd.', 'Item']; 
+    final isReturn = delivery.type == DeliveryType.devolucao;
     
-    // 2. Ordem dos dados alterada para corresponder aos cabeçalhos
+    // Lista de colunas varia com o tipo de documento
+    final List<String> headers = isReturn 
+        ? ['N.', 'SKU', 'Qtd Devolvida', 'Item', 'Motivo da Devolução']
+        : ['N.', 'SKU', 'Qtd.', 'Item', 'Env.', 'Dev.', 'Ent.', 'Motivo/Obs'];
+
+    // Se for Saída (Normal), verificamos se houve recusa parcial para exibir colunas extras
+    bool hasImmediateRefusal = !isReturn && delivery.items.any((i) => i.returnQuantity > 0);
+    
+    // Se for saída limpa, voltamos para colunas simples
+    final List<String> finalHeaders = (isReturn || hasImmediateRefusal) 
+        ? headers 
+        : ['N.', 'SKU', 'Qtd.', 'Item']; 
+
     final data = delivery.items.asMap().entries.map((entry) {
       final index = entry.key + 1;
       final item = entry.value;
-      return [
-        index.toString(),
-        item.sku,
-        '${item.quantity} Un.', // Coluna Qtd. agora é a terceira
-        item.productName,      // Coluna Item agora é a quarta
-      ];
+      
+      if (isReturn) {
+        // Documento de DEVOLUÇÃO
+        return [
+          index.toString(),
+          item.sku,
+          item.quantity.toString(), // Na devolução, quantity é o que voltou
+          item.productName,
+          item.returnReason?.replaceAll(' | ', '\n') ?? '-'
+        ];
+      } else if (hasImmediateRefusal) {
+        // Documento de SAÍDA com Recusa Imediata
+        final accepted = item.quantity - item.returnQuantity;
+        return [
+          index.toString(),
+          item.sku,
+          '-', // Coluna Qtd Geral fica vazia, usamos Env/Dev/Ent
+          item.productName,
+          item.quantity.toString(),
+          item.returnQuantity > 0 ? item.returnQuantity.toString() : '-',
+          accepted.toString(),
+          item.returnReason?.replaceAll(' | ', '\n') ?? '-'
+        ];
+      } else {
+        // Documento de SAÍDA Limpa (Padrão)
+        // Corrigido: Qtd antes do Item
+        return [
+          index.toString(),
+          item.sku,
+          '${item.quantity} Un.',
+          item.productName,
+        ];
+      }
     }).toList();
     
+    // Definição das larguras das colunas
+    Map<int, pw.TableColumnWidth> columnWidths;
+    Map<int, pw.Alignment> cellAlignments;
+
+    if (isReturn) {
+        columnWidths = {
+            0: const pw.FixedColumnWidth(20), 1: const pw.FixedColumnWidth(50), 2: const pw.FixedColumnWidth(60),
+            3: const pw.FlexColumnWidth(2), 4: const pw.FlexColumnWidth(1.5)
+        };
+        cellAlignments = {
+            0: pw.Alignment.center, 1: pw.Alignment.centerLeft, 2: pw.Alignment.center,
+            3: pw.Alignment.centerLeft, 4: pw.Alignment.centerLeft
+        };
+    } else if (hasImmediateRefusal) {
+        columnWidths = {
+            0: const pw.FixedColumnWidth(20), 1: const pw.FixedColumnWidth(50), 2: const pw.FixedColumnWidth(30), 
+            3: const pw.FlexColumnWidth(2), 4: const pw.FixedColumnWidth(25), 5: const pw.FixedColumnWidth(25), 
+            6: const pw.FixedColumnWidth(25), 7: const pw.FlexColumnWidth(1.5)
+        };
+        cellAlignments = {
+            0: pw.Alignment.center, 1: pw.Alignment.centerLeft, 2: pw.Alignment.center,
+            3: pw.Alignment.centerLeft, 4: pw.Alignment.center, 5: pw.Alignment.center, 6: pw.Alignment.center, 7: pw.Alignment.centerLeft
+        };
+    } else {
+        // Padrão
+        columnWidths = {
+            0: const pw.FixedColumnWidth(25), 
+            1: const pw.FlexColumnWidth(1.5), 
+            2: const pw.FixedColumnWidth(50), 
+            3: const pw.FlexColumnWidth(3.0)  
+        };
+        cellAlignments = {
+            0: pw.Alignment.center, 1: pw.Alignment.centerLeft, 2: pw.Alignment.center, 3: pw.Alignment.centerLeft
+        };
+    }
+
     return pw.TableHelper.fromTextArray(
       cellPadding: const pw.EdgeInsets.all(4),
       headerStyle: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 9),
       headerCellDecoration: const pw.BoxDecoration(color: PdfColors.grey300),
-      cellStyle: const pw.TextStyle(fontSize: 9),
-      // 3. Alinhamentos ajustados para a nova ordem
-      cellAlignments: {
-        0: pw.Alignment.center,     // N.
-        1: pw.Alignment.centerLeft, // SKU
-        2: pw.Alignment.center,     // Qtd.
-        3: pw.Alignment.centerLeft, // Item
-      },
-      // 4. Larguras (opcional, mas recomendado para bom espaçamento)
-      columnWidths: {
-        0: const pw.FixedColumnWidth(25),  // N.
-        1: const pw.FlexColumnWidth(1.5),  // SKU
-        2: const pw.FixedColumnWidth(40),  // Qtd. (largura fixa)
-        3: const pw.FlexColumnWidth(3.0),  // Item (mais espaço)
-      },
-      headers: headers,
+      cellStyle: const pw.TextStyle(fontSize: 8),
+      cellAlignments: cellAlignments,
+      columnWidths: columnWidths,
+      headers: finalHeaders,
       data: data,
     );
   }
 
-  pw.Widget _buildSignatureSection() {
+  pw.Widget _buildSignatureSection(DeliveryType type) {
+    final label = type == DeliveryType.devolucao 
+        ? 'Assinatura do Responsável (Recebimento da Devolução)'
+        : 'Assinatura do Recebedor (Cliente)';
+        
     return pw.Container(
       margin: const pw.EdgeInsets.only(top: 50),
       child: pw.Column(
         children: [
           pw.Divider(color: PdfColors.black, height: 10),
           pw.SizedBox(height: 5),
-          pw.Text('Assinatura do Recebedor', style: const pw.TextStyle(fontSize: 9)),
+          pw.Text(label, style: const pw.TextStyle(fontSize: 9)),
           pw.SizedBox(height: 10),
           pw.Text('Nome Legível: _________________________________________', style: const pw.TextStyle(fontSize: 9)),
           pw.SizedBox(height: 10),

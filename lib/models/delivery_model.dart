@@ -3,20 +3,26 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum DeliveryStatus { emTransito, entregue }
+// NOVO ENUM PARA O TIPO DE MOVIMENTAÇÃO
+enum DeliveryType { saida, devolucao } 
 
 class DeliveryItem {
   final String productId;
   final String sku;
   final String productName;
   final int quantity;
-  final String logoType; // ##### NOVO CAMPO ADICIONADO #####
+  final String logoType;
+  final int returnQuantity; // Usado na entrega (recusa imediata)
+  final String? returnReason;
 
   DeliveryItem({
     required this.productId,
     required this.sku,
     required this.productName,
     required this.quantity,
-    required this.logoType, // ##### NOVO CAMPO ADICIONADO #####
+    required this.logoType,
+    this.returnQuantity = 0,
+    this.returnReason,
   });
 
   Map<String, dynamic> toJson() => {
@@ -24,7 +30,9 @@ class DeliveryItem {
     'sku': sku, 
     'productName': productName, 
     'quantity': quantity,
-    'logoType': logoType, // ##### NOVO CAMPO ADICIONADO #####
+    'logoType': logoType,
+    'returnQuantity': returnQuantity,
+    'returnReason': returnReason,
   };
   
   factory DeliveryItem.fromJson(Map<String, dynamic> json) => DeliveryItem(
@@ -32,7 +40,9 @@ class DeliveryItem {
     sku: json['sku'], 
     productName: json['productName'], 
     quantity: json['quantity'],
-    logoType: json['logoType'] ?? 'Nenhum', // ##### NOVO CAMPO ADICIONADO (com fallback) #####
+    logoType: json['logoType'] ?? 'Nenhum',
+    returnQuantity: json['returnQuantity'] ?? 0,
+    returnReason: json['returnReason'],
   );
 }
 
@@ -46,6 +56,8 @@ class Delivery {
   final String vehiclePlate;
   final String createdByUserName;
   final DeliveryStatus status;
+  // NOVO CAMPO
+  final DeliveryType type; 
 
   Delivery({
     this.id,
@@ -57,6 +69,7 @@ class Delivery {
     this.vehiclePlate = '',
     required this.createdByUserName,
     this.status = DeliveryStatus.emTransito,
+    this.type = DeliveryType.saida, // Padrão é saída
   });
 
   Delivery copyWith({String? id}) {
@@ -70,6 +83,7 @@ class Delivery {
       vehiclePlate: vehiclePlate,
       createdByUserName: createdByUserName,
       status: status,
+      type: type,
     );
   }
 
@@ -82,6 +96,7 @@ class Delivery {
     'vehiclePlate': vehiclePlate,
     'createdByUserName': createdByUserName,
     'status': status.name,
+    'type': type.name, // Salva o tipo
   };
 
   factory Delivery.fromFirestore(Map<String, dynamic> data, String documentId) {
@@ -99,6 +114,11 @@ class Delivery {
       status: DeliveryStatus.values.firstWhere(
         (e) => e.name == data['status'],
         orElse: () => DeliveryStatus.emTransito,
+      ),
+      // Lê o tipo, com fallback para 'saida' para compatibilidade antiga
+      type: DeliveryType.values.firstWhere(
+        (e) => e.name == (data['type'] ?? 'saida'),
+        orElse: () => DeliveryType.saida,
       ),
     );
   }
