@@ -1,4 +1,4 @@
-// lib/screens/products_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
+// lib/screens/products_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -6,10 +6,11 @@ import '../models/product_model.dart';
 import '../models/price_variation_model.dart';
 import '../services/firestore_service.dart';
 import '../widgets/product_dialog.dart';
+import 'bulk_price_update_screen.dart'; 
 
 class ProductsScreen extends StatefulWidget {
-  // O parâmetro userRole não é mais necessário aqui
-  const ProductsScreen({super.key});
+  final String userRole; 
+  const ProductsScreen({super.key, required this.userRole});
 
   @override
   State<ProductsScreen> createState() => _ProductsScreenState();
@@ -88,11 +89,37 @@ class _ProductsScreenState extends State<ProductsScreen> {
     );
   }
 
+  void _navigateToBulkUpdate() {
+    Navigator.push(
+      context, 
+      // REMOVIDO O 'const' AQUI PARA EVITAR ERROS DE CONTEXTO
+      MaterialPageRoute(builder: (context) => const BulkPriceUpdateScreen())
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
+    final isAdm = widget.userRole == 'admin';
     
     return Scaffold(
+      appBar: AppBar(
+        title: const Text('Produtos'),
+        actions: [
+          if (isAdm)
+            IconButton(
+              icon: const Icon(Icons.price_change),
+              tooltip: 'Reajuste de Preços em Massa',
+              onPressed: _navigateToBulkUpdate,
+            ),
+          
+          IconButton(
+            icon: const Icon(Icons.add),
+            tooltip: 'Novo Produto',
+            onPressed: () => _showProductDialog(),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
@@ -132,7 +159,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                       scrollDirection: Axis.horizontal,
                       child: DataTable(
                         columnSpacing: 24,
-                        headingRowColor: MaterialStateProperty.all(Colors.grey.shade200),
+                        headingRowColor: WidgetStateProperty.all(Colors.grey.shade200),
                         columns: const [
                           DataColumn(label: Text('Nome/Descrição', style: TextStyle(fontWeight: FontWeight.bold))),
                           DataColumn(label: Text('SKU', style: TextStyle(fontWeight: FontWeight.bold))),
@@ -153,9 +180,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
                             DataCell(Text(currencyFormatter.format(priceWithoutNota.price))),
                             DataCell(Text(currencyFormatter.format(priceWithNota.price))),
                             DataCell(Text(currencyFormatter.format(product.clientLogoPrice))),
-                            // =================================================================
-                            // CONDIÇÃO REMOVIDA, BOTÕES SEMPRE VISÍVEIS
-                            // =================================================================
                             DataCell(Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [

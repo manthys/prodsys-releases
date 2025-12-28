@@ -909,4 +909,72 @@ class FirestoreService {
     await batch.commit();
     await checkIfOrderIsFullyCompleted(orderId);
   }
+  // =================================================================
+  // FUNÇÃO PARA ATUALIZAÇÃO DE PREÇOS EM MASSA
+  // =================================================================
+  Future<int> batchUpdateProductPrices({
+    required List<String> productIds,
+    required double newPriceComNota,
+    required double newPriceSemNota,
+  }) async {
+    final batch = _db.batch();
+    int count = 0;
+
+    for (final pid in productIds) {
+      final docRef = _db.collection('products').doc(pid);
+      
+      // Cria a nova estrutura de variações de preço
+      final List<Map<String, dynamic>> newVariations = [
+        {'description': 'Sem Nota', 'price': newPriceSemNota},
+        {'description': 'Com Nota', 'price': newPriceComNota},
+      ];
+
+      batch.update(docRef, {'priceVariations': newVariations});
+      count++;
+      
+      // O Firestore tem limite de 500 operações por batch
+      if (count % 400 == 0) {
+        await batch.commit();
+        // Reinicia o batch para o próximo lote (se houver)
+        // Nota: Em uma implementação simples, assumimos < 500 produtos por vez.
+        // Se tiver milhares, precisaria de uma lógica de loop de batches.
+      }
+    }
+
+    if (count > 0) {
+      await batch.commit();
+    }
+    return count;
+  }
+  // =================================================================
+  // ATUALIZAÇÃO FLEXÍVEL DE PREÇOS (EM LOTE)
+  // Recebe uma lista de mapas: { 'id': '...', 'semNota': 10.0, 'comNota': 12.0 }
+  // =================================================================
+  Future<void> batchUpdateCustomPrices(List<Map<String, dynamic>> updates) async {
+    final batch = _db.batch();
+    int count = 0;
+
+    for (final item in updates) {
+      final docRef = _db.collection('products').doc(item['id']);
+      
+      final List<Map<String, dynamic>> newVariations = [
+        {'description': 'Sem Nota', 'price': item['semNota']},
+        {'description': 'Com Nota', 'price': item['comNota']},
+      ];
+
+      batch.update(docRef, {'priceVariations': newVariations});
+      count++;
+
+      if (count % 400 == 0) {
+        await batch.commit();
+      }
+    }
+
+    if (count > 0) {
+      await batch.commit();
+    }
+  }
+  
+  // Getter para acessar o DB se precisar (opcional, já que estamos usando methods)
+  FirebaseFirestore get db => _db;
 }

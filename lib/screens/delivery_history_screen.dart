@@ -47,6 +47,9 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
     }
   }
 
+  // =================================================================
+  // 1. CONFIRMAÇÃO DE ENTREGA (No ato da entrega pelo motorista)
+  // =================================================================
   void _confirmDeliveryReceived(Delivery delivery) async {
     final Map<int, int> returnsMap = {};
     final Map<int, TextEditingController> reasonsControllers = {};
@@ -89,7 +92,9 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
                                   child: Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
-                                      Text(item.productName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                                      Text(item.productName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                      // ADICIONADO SKU AQUI
+                                      Text('SKU: ${item.sku}', style: TextStyle(fontSize: 11, color: Colors.grey[700], fontWeight: FontWeight.w500)),
                                       Text('Enviado: ${item.quantity}', style: const TextStyle(fontSize: 12)),
                                     ],
                                   ),
@@ -194,7 +199,7 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
             productId: originalItem.productId,
             sku: originalItem.sku,
             productName: originalItem.productName,
-            quantity: originalItem.quantity,
+            quantity: originalItem.quantity, 
             logoType: originalItem.logoType,
             returnQuantity: qtyReturned, 
             returnReason: reason, 
@@ -218,6 +223,9 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
     }
   }
 
+  // =================================================================
+  // 2. DEVOLUÇÃO PÓS-ENTREGA (Cliente volta dias depois)
+  // =================================================================
   void _registerPostDeliveryReturn(Delivery originalDelivery) async {
     final Map<int, int> returnsMap = {};
     final Map<int, TextEditingController> reasonsControllers = {};
@@ -267,6 +275,8 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
                                     crossAxisAlignment: CrossAxisAlignment.start,
                                     children: [
                                       Text(item.productName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                                      // ADICIONADO SKU AQUI TAMBÉM
+                                      Text('SKU: ${item.sku}', style: TextStyle(fontSize: 11, color: Colors.grey[700], fontWeight: FontWeight.w500)),
                                       Text('Qtd nesta nota: $acceptedQty', style: const TextStyle(fontSize: 12)),
                                     ],
                                   ),
@@ -366,7 +376,7 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
               productId: originalItem.productId,
               sku: originalItem.sku,
               productName: originalItem.productName,
-              quantity: qty,
+              quantity: qty, 
               logoType: originalItem.logoType,
               returnReason: reasonsControllers[i]?.text,
             ));
@@ -451,15 +461,13 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
               final isReturn = delivery.type == DeliveryType.devolucao;
               final isDelivered = delivery.status == DeliveryStatus.entregue;
               
-              // Totais para exibição no card
               final totalQtd = delivery.items.map((e) => e.quantity).reduce((a, b) => a + b);
               
-              // CORREÇÃO VISUAL: Calcular detalhes da SAÍDA (recusas imediatas)
               int totalImmediateReturn = 0;
               int totalAccepted = 0;
               if (!isReturn) {
                  totalImmediateReturn = delivery.items.map((e) => e.returnQuantity).reduce((a, b) => a + b);
-                 totalAccepted = totalQtd - totalImmediateReturn; // totalQtd na saída é o total ENVIADO
+                 totalAccepted = totalQtd - totalImmediateReturn; 
               }
 
               return Card(
@@ -488,7 +496,6 @@ class _DeliveryHistoryScreenState extends State<DeliveryHistoryScreen> {
                       if (isReturn)
                         Text('$totalQtd itens devolvidos pelo cliente.')
                       else if (isDelivered && totalImmediateReturn > 0)
-                        // EXIBE DETALHE SE TEVE RECUSA IMEDIATA
                         Text('Enviados: $totalQtd | Entregues: $totalAccepted | Devolvidos: $totalImmediateReturn', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.orange))
                       else if (isDelivered)
                         Text('Motorista: ${delivery.driverName} | Total Entregue: $totalQtd itens')

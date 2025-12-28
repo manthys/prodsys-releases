@@ -1,4 +1,4 @@
-// lib/screens/main_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
+// lib/screens/main_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -40,11 +40,10 @@ class _MainScreenState extends State<MainScreen> {
   String _userRole = 'employee';
   bool _isLoadingRole = true;
 
-  final List<Widget> _adminScreens = const [DashboardScreen(), OrdersScreen(), ProductionScreen(), StockScreen(), ClientsScreen(), ProductsScreen(), MoldsScreen(), ExpensesScreen(), ManageUsersScreen(), SettingsScreen()];
+  // LISTAS DE TÍTULOS E DESTINOS (Podem ser const)
   final List<String> _adminTitles = const ['Dashboard', 'Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos', 'Gerenciar Formas', 'Controle de Gastos', 'Gerenciar Usuários', 'Configurações da Empresa'];
   final List<NavigationRailDestination> _adminDestinations = const [NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Dashboard')), NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos')), NavigationRailDestination(icon: Icon(Icons.handyman_outlined), selectedIcon: Icon(Icons.handyman), label: Text('Formas')), NavigationRailDestination(icon: Icon(Icons.money_off_outlined), selectedIcon: Icon(Icons.money_off), label: Text('Gastos')), NavigationRailDestination(icon: Icon(Icons.manage_accounts_outlined), selectedIcon: Icon(Icons.manage_accounts), label: Text('Usuários')), NavigationRailDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: Text('Ajustes'))];
   
-  final List<Widget> _employeeScreens = const [OrdersScreen(), ProductionScreen(), StockScreen(), ClientsScreen(), ProductsScreen()];
   final List<String> _employeeTitles = const ['Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos'];
   final List<NavigationRailDestination> _employeeDestinations = const [NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos'))];
 
@@ -109,19 +108,19 @@ class _MainScreenState extends State<MainScreen> {
     final bool isAdmin = _userRole == 'admin';
     String? tooltip;
     VoidCallback? onPressed;
-    if (_selectedIndex >= (isAdmin ? _adminTitles.length : _employeeTitles.length)) {
-      _selectedIndex = 0;
+    
+    // Verificação de segurança de índice
+    final maxIndex = isAdmin ? _adminTitles.length : _employeeTitles.length;
+    if (_selectedIndex >= maxIndex) {
+      _selectedIndex = 0; 
     }
+    
     final currentTitle = (isAdmin ? _adminTitles : _employeeTitles)[_selectedIndex];
 
     switch (currentTitle) {
       case 'Cotações e Pedidos': tooltip = 'Nova Cotação'; onPressed = () => Navigator.of(fabContext).push(MaterialPageRoute(builder: (context) => const OrderFormScreen())); break;
       case 'Clientes': tooltip = 'Adicionar Cliente'; onPressed = () async { final result = await showDialog<Client>(context: fabContext, builder: (_) => const ClientDialog()); if (result != null && mounted) await _firestoreService.addClient(result); }; break;
       case 'Controle de Estoque': tooltip = 'Adicionar Estoque Manual'; onPressed = () async { final result = await showDialog<bool>(context: fabContext, builder: (_) => const StockItemDialog()); if (result == true && mounted) { ScaffoldMessenger.of(fabContext).showSnackBar(const SnackBar(content: Text('Estoque adicionado!'), backgroundColor: Colors.green)); } }; break;
-      
-      // =================================================================
-      // CONDIÇÃO "if (isAdmin)" REMOVIDA AQUI
-      // =================================================================
       case 'Catálogo de Produtos': 
         tooltip = 'Adicionar Produto'; 
         onPressed = () async { 
@@ -129,7 +128,6 @@ class _MainScreenState extends State<MainScreen> {
           if (result != null && mounted) await _firestoreService.addProduct(result); 
         }; 
         break;
-
       case 'Gerenciar Formas': if (isAdmin) { tooltip = 'Adicionar Forma'; onPressed = () async { final result = await showDialog<Mold>(context: fabContext, builder: (_) => const MoldDialog()); if (result != null && mounted) await _firestoreService.addMold(result); }; } break;
       case 'Controle de Gastos': if (isAdmin) { tooltip = 'Nova Despesa'; onPressed = () async { final result = await showDialog<Expense>(context: fabContext, builder: (_) => const ExpenseDialog()); if (result != null && mounted) await _firestoreService.addExpense(result); }; } break;
       case 'Gerenciar Usuários': if (isAdmin) { tooltip = 'Novo Funcionário'; onPressed = () async { final result = await showDialog<bool>(context: fabContext, builder: (_) => const UserDialog()); if (result == true && mounted) { ScaffoldMessenger.of(fabContext).showSnackBar(const SnackBar(content: Text('Funcionário criado com sucesso!'), backgroundColor: Colors.green)); } }; } break;
@@ -144,7 +142,31 @@ class _MainScreenState extends State<MainScreen> {
   @override
   Widget build(BuildContext context) {
     final bool isAdmin = _userRole == 'admin';
-    final screens = isAdmin ? _adminScreens : _employeeScreens;
+    
+    // LISTAS DE TELAS (NÃO CONSTANTES - MOVIDAS PARA O BUILD)
+    // Precisam ser criadas aqui para acessar _userRole atualizado
+    final List<Widget> adminScreens = [
+        const DashboardScreen(), 
+        const OrdersScreen(), 
+        const ProductionScreen(), 
+        const StockScreen(), 
+        const ClientsScreen(), 
+        ProductsScreen(userRole: _userRole), // <--- AQUI A CORREÇÃO (Passando userRole)
+        const MoldsScreen(), 
+        const ExpensesScreen(), 
+        const ManageUsersScreen(), 
+        const SettingsScreen()
+    ];
+
+    final List<Widget> employeeScreens = [
+        const OrdersScreen(), 
+        const ProductionScreen(), 
+        const StockScreen(), 
+        const ClientsScreen(), 
+        ProductsScreen(userRole: _userRole) // <--- AQUI A CORREÇÃO
+    ];
+
+    final screens = isAdmin ? adminScreens : employeeScreens;
     final titles = isAdmin ? _adminTitles : _employeeTitles;
     final destinations = isAdmin ? _adminDestinations : _employeeDestinations;
 
