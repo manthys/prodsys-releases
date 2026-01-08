@@ -1,9 +1,9 @@
-// lib/screens/order_form_screen.dart (VERSÃO COMPLETA E CORRIGIDA)
+// lib/screens/order_form_screen.dart
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:mask_text_input_formatter/mask_text_input_formatter.dart'; // Import da máscara
+import 'package:mask_text_input_formatter/mask_text_input_formatter.dart'; 
 import '../models/address_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
@@ -41,10 +41,10 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
   
   final _clientController = TextEditingController();
   final _buyerNameController = TextEditingController();
-  final _buyerPhoneController = TextEditingController(); // <-- ADICIONADO
-  final _buyerEmailController = TextEditingController(); // <-- ADICIONADO
+  final _buyerPhoneController = TextEditingController(); 
+  final _buyerEmailController = TextEditingController(); 
 
-  final _phoneMask = MaskTextInputFormatter(mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')}); // <-- MÁSCARA
+  final _phoneMask = MaskTextInputFormatter(mask: '(##) #####-####', filter: {"#": RegExp(r'[0-9]')}); 
 
   Client? _selectedClient;
   List<Client> _allClients = [];
@@ -85,8 +85,8 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     _discountController.dispose();
     _clientController.dispose();
     _buyerNameController.dispose();
-    _buyerPhoneController.dispose(); // <-- ADICIONADO
-    _buyerEmailController.dispose(); // <-- ADICIONADO
+    _buyerPhoneController.dispose(); 
+    _buyerEmailController.dispose(); 
     super.dispose();
   }
 
@@ -119,8 +119,8 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     }
     
     _buyerNameController.text = order.buyerName ?? '';
-    _buyerPhoneController.text = order.buyerPhone ?? ''; // <-- ADICIONADO
-    _buyerEmailController.text = order.buyerEmail ?? ''; // <-- ADICIONADO
+    _buyerPhoneController.text = order.buyerPhone ?? ''; 
+    _buyerEmailController.text = order.buyerEmail ?? ''; 
     _shippingCostController.text = order.shippingCost.toString();
     _discountController.text = order.discount.toString();
     _notesController.text = order.notes ?? '';
@@ -409,7 +409,6 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
     }
   }
 
-  // ##### LÓGICA DE SALVAR ATUALIZADA #####
   void _saveOrder() async {
     final currentUser = _authService.currentUser;
     if (currentUser == null) {
@@ -423,13 +422,14 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
         final originalOrder = widget.existingOrder!;
         final updatedOrderData = originalOrder.copyWith(
           buyerName: _buyerNameController.text,
-          buyerPhone: _buyerPhoneController.text, // <-- ADICIONADO
-          buyerEmail: _buyerEmailController.text, // <-- ADICIONADO
+          buyerPhone: _buyerPhoneController.text, 
+          buyerEmail: _buyerEmailController.text, 
           clientId: _selectedClient!.id!, clientName: _selectedClient!.name, items: _orderItems,
           totalItemsAmount: _totalItemsAmount, shippingCost: _shippingCost, discount: _discount, finalAmount: _finalAmount,
           notes: _notesController.text, paymentMethod: _paymentMethod, deliveryAddress: deliveryAddress, deliveryDate: _estimatedDeliveryDate != null ? Timestamp.fromDate(_estimatedDeliveryDate!) : originalOrder.deliveryDate,
         );
 
+        // CORREÇÃO: updateActiveOrder já verifica status, mas updateFinalizedOrder reabre.
         if (originalOrder.status == OrderStatus.finalizado) {
           await _firestoreService.updateFinalizedOrder(originalOrder, updatedOrderData);
         } else {
@@ -441,9 +441,10 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
 
       } else {
         final newOrder = Order(
+          status: OrderStatus.cotacao, // GARANTIA DE STATUS INICIAL: Sempre Cotação
           buyerName: _buyerNameController.text,
-          buyerPhone: _buyerPhoneController.text, // <-- ADICIONADO
-          buyerEmail: _buyerEmailController.text, // <-- ADICIONADO
+          buyerPhone: _buyerPhoneController.text, 
+          buyerEmail: _buyerEmailController.text, 
           clientId: _selectedClient!.id!, clientName: _selectedClient!.name, items: _orderItems,
           creationDate: Timestamp.now(), totalItemsAmount: _totalItemsAmount,
           shippingCost: _shippingCost, discount: _discount, finalAmount: _finalAmount,
@@ -488,7 +489,6 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
 
               const SizedBox(height: 16),
               
-              // SEÇÃO DO COMPRADOR ATUALIZADA
               TextFormField(
                 controller: _buyerNameController,
                 decoration: const InputDecoration(labelText: 'Nome do Comprador (Opcional)', border: OutlineInputBorder(), prefixIcon: Icon(Icons.person_pin_outlined)),
@@ -501,7 +501,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                       controller: _buyerPhoneController,
                       decoration: const InputDecoration(labelText: 'Telefone do Comprador', border: OutlineInputBorder(), prefixIcon: Icon(Icons.phone_outlined)),
                       keyboardType: TextInputType.phone,
-                      inputFormatters: [_phoneMask], // Aplicando a máscara
+                      inputFormatters: [_phoneMask], 
                     ),
                   ),
                   const SizedBox(width: 16),
@@ -515,6 +515,7 @@ class _OrderFormScreenState extends State<OrderFormScreen> {
                 ],
               ),
 
+              // ... (Restante do Build mantido igual, apenas lógica de _saveOrder alterada)
               const SizedBox(height: 16),
               Text('Forma de Pagamento', style: Theme.of(context).textTheme.titleSmall),
               Row(
@@ -730,43 +731,6 @@ class _ClientSearchDialogState extends State<_ClientSearchDialog> {
       actions: [
         TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancelar'))
       ],
-    );
-  }
-}
-
-class _CpfCnpjFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-      TextEditingValue oldValue, TextEditingValue newValue) {
-    final text = newValue.text;
-    
-    if (text.isEmpty) {
-      return newValue;
-    }
-
-    final digitsOnly = text.replaceAll(RegExp(r'[^\d]'), '');
-
-    if (digitsOnly.length > 14) {
-      return oldValue;
-    }
-
-    String newText;
-
-    if (digitsOnly.length <= 11) {
-      newText = digitsOnly.replaceAllMapped(
-        RegExp(r'(\d{3})(\d{3})(\d{3})(\d{2})'),
-        (Match m) => '${m[1]}.${m[2]}.${m[3]}-${m[4]}',
-      );
-    } else {
-      newText = digitsOnly.replaceAllMapped(
-        RegExp(r'(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})'),
-        (Match m) => '${m[1]}.${m[2]}.${m[3]}/${m[4]}-${m[5]}',
-      );
-    }
-
-    return TextEditingValue(
-      text: newText,
-      selection: TextSelection.collapsed(offset: newText.length),
     );
   }
 }
