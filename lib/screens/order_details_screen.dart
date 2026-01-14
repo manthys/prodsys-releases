@@ -666,32 +666,34 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     if (result != null) {
       setState(() { _currentOrder = result; });
 
-      bool needsAllocation = false;
+      bool quantityChanged = false;
       
+      // Verifica se houve mudança de itens ou quantidades
       for (var newItem in result.items) {
         final originalItem = originalOrder.items.firstWhereOrNull(
           (old) => old.productId == newItem.productId && old.logoType == newItem.logoType
         );
 
         if (originalItem == null) {
-          needsAllocation = true;
+          quantityChanged = true; // Item novo adicionado
           break;
         } else if (newItem.quantity > originalItem.quantity) {
-          needsAllocation = true;
+          quantityChanged = true; // Quantidade aumentou
           break;
         }
       }
 
-      if (originalOrder.status == OrderStatus.finalizado && 
-         (result.status == OrderStatus.emFabricacao || result.status == OrderStatus.aguardandoEntrega)) {
-         needsAllocation = true;
-      }
+      // REGRA DE OURO: Só tenta alocar se a quantidade mudou E o status for de produção ativa.
+      // Cotação e Pedido (aguardando sinal) são ignorados aqui.
+      bool isProductionActive = result.status == OrderStatus.emFabricacao || 
+                                result.status == OrderStatus.aguardandoEntrega;
 
-      if (needsAllocation) {
-        _showSnackBar('Alterações detectadas. Verificando estoque para alocação...');
+      if (quantityChanged && isProductionActive) {
+        _showSnackBar('Alterações em produção detectadas. Verificando estoque para alocação...');
         await Future.delayed(const Duration(milliseconds: 500)); 
         await _triggerSmartAllocation(result);
       } else {
+        // Se for Cotação ou Pedido, apenas recarrega os dados sem perturbar o usuário
         _reloadOrder();
       }
     }
@@ -1285,6 +1287,7 @@ class _AllocationDialog extends StatefulWidget {
   final List<OrderItem> neededItems;
 
   const _AllocationDialog({
+    super.key,
     required this.groupedStock,
     required this.allOrders,
     required this.neededItems,
@@ -1297,14 +1300,43 @@ class _AllocationDialog extends StatefulWidget {
 class _AllocationDialogState extends State<_AllocationDialog> {
   final Map<String, bool> _sourceSelection = {};
   late Map<String, int> _neededQty;
+  late List<String> _validSourceKeys;
 
   @override
   void initState() {
     super.initState();
-    for (var key in widget.groupedStock.keys) {
+    _filterValidSources();
+    _calculateNeeded();
+  }
+
+  // Filtra quais fontes de estoque podem ser mostradas (remove Finalizados/Cancelados)
+  void _filterValidSources() {
+    _validSourceKeys = widget.groupedStock.keys.where((orderId) {
+      // Estoque Geral sempre aparece
+      if (orderId == 'general') return true;
+
+      // Busca o pedido na lista
+      final order = widget.allOrders.firstWhereOrNull((o) => o.id == orderId);
+      
+      // Se não achar o pedido ou se ele já estiver Finalizado/Cancelado, esconde
+      if (order == null) return false;
+      if (order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado) {
+        return false;
+      }
+      return true;
+    }).toList();
+
+    // Ordena: Geral primeiro, depois alfabético
+    _validSourceKeys.sort((a, b) {
+      if (a == 'general') return -1;
+      if (b == 'general') return 1;
+      return a.compareTo(b);
+    });
+
+    // Marca todos os válidos como selecionados por padrão
+    for (var key in _validSourceKeys) {
       _sourceSelection[key] = true;
     }
-    _calculateNeeded();
   }
 
   void _calculateNeeded() {
@@ -1317,16 +1349,10 @@ class _AllocationDialogState extends State<_AllocationDialog> {
     final selected = <StockItem>[];
     final tempNeeded = Map<String, int>.from(_neededQty);
 
-    final List<String> sourceKeys = widget.groupedStock.keys.toList();
-    sourceKeys.sort((a, b) {
-      if (a == 'general') return -1;
-      if (b == 'general') return 1;
-      return a.compareTo(b);
-    });
-
-    for(final sourceKey in sourceKeys) {
+    for(final sourceKey in _validSourceKeys) {
       if (_sourceSelection[sourceKey] == true) {
         final sortedItems = List<StockItem>.from(widget.groupedStock[sourceKey]!);
+        // Pega os itens mais antigos primeiro (FIFO)
         sortedItems.sort((a, b) => (a.deliveryDeadline ?? a.creationDate).compareTo(b.deliveryDeadline ?? b.creationDate));
 
         for (final item in sortedItems) {
@@ -1343,6 +1369,21 @@ class _AllocationDialogState extends State<_AllocationDialog> {
 
   @override
   Widget build(BuildContext context) {
+    // Se após filtrar não sobrar nenhuma fonte de estoque válida (ex: só tinha estoque de pedido finalizado)
+    // O usuário deve ser forçado a produzir do zero ou cancelar.
+    if (_validSourceKeys.isEmpty) {
+      return AlertDialog(
+        title: const Text('Sem estoque disponível para realocação'),
+        content: const Text('Não há itens disponíveis no Estoque Geral ou em Pedidos Abertos para cobrir esta necessidade.'),
+        actions: [
+          TextButton(
+             onPressed: () => Navigator.of(context).pop(<StockItem>[]), // Retorna lista vazia = Produzir do Zero
+             child: const Text('Produzir Tudo do Zero'),
+          ),
+        ],
+      );
+    }
+
     return AlertDialog(
       title: const Text('Alocação Inteligente de Estoque'),
       content: SizedBox(
@@ -1354,15 +1395,17 @@ class _AllocationDialogState extends State<_AllocationDialog> {
             children: [
               const Text('Selecione as fontes de estoque que deseja usar:'),
               const SizedBox(height: 8),
-              ...widget.groupedStock.keys.map((orderId) {
+              
+              // Usa a lista filtrada _validSourceKeys
+              ..._validSourceKeys.map((orderId) {
                 final items = widget.groupedStock[orderId]!;
                 final order = orderId == 'general' 
                   ? null 
-                  : widget.allOrders.firstWhere((o) => o.id == orderId, orElse: () => widget.allOrders.first);
+                  : widget.allOrders.firstWhereOrNull((o) => o.id == orderId);
                 
                 final title = orderId == 'general'
                   ? 'Estoque Geral (${items.length} un.)'
-                  : 'Pedido #${orderId.substring(0,6).toUpperCase()} (${order?.clientName}) - ${items.length} un.';
+                  : 'Pedido #${orderId.substring(0,6).toUpperCase()} (${order?.clientName ?? 'N/A'}) - ${items.length} un.';
 
                 final itemsByProduct = groupBy(items, (StockItem item) => '${item.productId}-${item.logoType}');
 
