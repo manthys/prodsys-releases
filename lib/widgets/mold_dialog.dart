@@ -15,18 +15,21 @@ class _MoldDialogState extends State<MoldDialog> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nameController;
   late TextEditingController _quantityController;
+  late TextEditingController _weightController;
 
   @override
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.mold?.name ?? '');
     _quantityController = TextEditingController(text: widget.mold?.quantityAvailable.toString() ?? '');
+    _weightController = TextEditingController(text: widget.mold?.weight.toString() ?? '0.0');
   }
 
   @override
   void dispose() {
     _nameController.dispose();
     _quantityController.dispose();
+    _weightController.dispose();
     super.dispose();
   }
 
@@ -38,6 +41,7 @@ class _MoldDialogState extends State<MoldDialog> {
         id: widget.mold?.id,
         name: _nameController.text,
         quantityAvailable: int.tryParse(_quantityController.text) ?? 0,
+        weight: double.tryParse(_weightController.text.replaceAll(',', '.')) ?? 0.0,
       );
       Navigator.of(context).pop(mold);
     }
@@ -68,6 +72,13 @@ class _MoldDialogState extends State<MoldDialog> {
                 if (int.tryParse(value) == null) return 'Valor inválido';
                 return null;
               },
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _weightController,
+              decoration: const InputDecoration(labelText: 'Peso da Peça Final (kg)', suffixText: 'kg'),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              // Opcional: Input formatter para permitir só numeros e ponto/vírgula
             ),
           ],
         ),

@@ -58,6 +58,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   List<StockItem>? _stockItemsForOrder;
   List<Delivery>? _deliveriesForOrder;
 
+  Map<String, double> _productWeights = {};
+
   bool _isLoading = true;
   DateTime? _recalculatedDeliveryDate;
   bool _isRecalculatingDate = false;
@@ -130,13 +132,27 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   Future<void> _loadInitialData() async {
     setState(() => _isLoading = true);
     
+    // CARREGANDO DADOS E PESOS
     final results = await Future.wait([
       _firestoreService.getStockItemsForOrder(_currentOrder.id!),
       _firestoreService.getDeliveriesForOrderStream(_currentOrder.id!).first,
       _authService.getUserRole(_authService.currentUser!.uid),
+      // Busca formas e produtos para calcular peso visual
+      _firestoreService.getMoldsStream().first,
+      _firestoreService.getProductsStream().first,
     ]);
 
     if(mounted) {
+      final molds = results[3] as List<dynamic>; // Mold
+      final products = results[4] as List<dynamic>; // Product
+      
+      // Mapeia pesos
+      final moldWeights = {for (var m in molds) m.name: (m.weight as double)};
+      _productWeights = {};
+      for (var p in products) {
+         _productWeights[p.id!] = moldWeights[p.moldType] ?? 0.0;
+      }
+
       setState(() {
         _stockItemsForOrder = results[0] as List<StockItem>;
         _deliveriesForOrder = results[1] as List<Delivery>;
@@ -176,10 +192,20 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
   
   // =================================================================
-  // LÓGICA DE ALOCAÇÃO (Conta devoluções posteriores)
+  // LÓGICA DE ALOCAÇÃO (COM PESO DA FORMA)
   // =================================================================
-  List<DeliverySelectionItem> _prepareSelectionItems() {
+  Future<List<DeliverySelectionItem>> _prepareSelectionItems() async {
       if (_stockItemsForOrder == null || _deliveriesForOrder == null) return [];
+
+      // Reutilizando os pesos já carregados para ser mais rápido, ou recarrega se preferir
+      // Vamos recarregar rápido para garantir consistência
+      final molds = await _firestoreService.getMoldsStream().first;
+      final products = await _firestoreService.getProductsStream().first;
+      final moldWeights = {for (var m in molds) m.name: m.weight};
+      final productWeights = <String, double>{};
+      for (var p in products) {
+         productWeights[p.id!] = moldWeights[p.moldType] ?? 0.0;
+      }
 
       final availableInStock = groupBy(
           _stockItemsForOrder!.where((item) => item.status == StockItemStatus.emEstoque),
@@ -218,6 +244,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                           logoType: orderItem.logoType,
                           maxQuantity: inStockCount < neededCount ? inStockCount : neededCount,
                           quantityToDeliver: inStockCount < neededCount ? inStockCount : neededCount,
+                          unitWeight: productWeights[orderItem.productId] ?? 0.0,
                       )
                   );
               }
@@ -477,59 +504,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
   
-  Future<void> _showUnifiedPaymentDialog(List<StockItem> chosenItems, DateTime newEstimatedDate) async {
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (context) => PaymentConfirmationDialog(totalAmount: _currentOrder.finalAmount),
-    );
-
-    if (result == null) return;
-
-    final double amountToConfirm = result['amount'];
-    final List<PaymentDistribution> distributions = result['distributions'];
-    final PlatformFile? proof = result['proof'];
-
-    setState(() => _isUploading = true);
-
-    try {
-      PaymentStatus newPaymentStatus;
-      if ((_currentOrder.amountPaid + amountToConfirm) >= _currentOrder.finalAmount) {
-        newPaymentStatus = PaymentStatus.pagoIntegralmente;
-      } else if (amountToConfirm > 0) {
-        newPaymentStatus = PaymentStatus.sinalPago;
-      } else {
-        newPaymentStatus = _currentOrder.paymentStatus;
-      }
-      
-      final updatedDistributions = [..._currentOrder.paymentDistributions, ...distributions];
-
-      final Map<String, dynamic> dataToUpdate = {
-        'paymentDistributions': updatedDistributions.map((d) => d.toJson()).toList(),
-        'paymentStatus': newPaymentStatus.name,
-        'status': OrderStatus.emFabricacao.name,
-        'confirmationDate': Timestamp.now(),
-        'deliveryDate': Timestamp.fromDate(newEstimatedDate),
-      };
-      
-      await _firestoreService.updateOrderPayment(_currentOrder.id!, dataToUpdate);
-      if (proof != null) {
-        await _uploadProof(proof);
-      }
-      
-      final updatedOrder = await _firestoreService.getOrderById(_currentOrder.id!);
-      if (updatedOrder == null) throw Exception("Pedido não encontrado após atualização.");
-
-      await _firestoreService.processSmartAllocationForOrder(updatedOrder, chosenItems);
-
-      _showSnackBar('Pagamento confirmado! Itens enviados para produção.');
-      _reloadOrder();
-    } catch (e) {
-      _showSnackBar('Erro no processo: $e', isError: true);
-    } finally {
-      if (mounted) setState(() => _isUploading = false);
-    }
-  }
-
   Future<void> _attachProof() async {
     final result = await FilePicker.platform.pickFiles();
     if (result == null || result.files.first.path == null) return;
@@ -684,7 +658,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       }
 
       // REGRA DE OURO: Só tenta alocar se a quantidade mudou E o status for de produção ativa.
-      // Cotação e Pedido (aguardando sinal) são ignorados aqui.
       bool isProductionActive = result.status == OrderStatus.emFabricacao || 
                                 result.status == OrderStatus.aguardandoEntrega;
 
@@ -693,7 +666,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         await Future.delayed(const Duration(milliseconds: 500)); 
         await _triggerSmartAllocation(result);
       } else {
-        // Se for Cotação ou Pedido, apenas recarrega os dados sem perturbar o usuário
         _reloadOrder();
       }
     }
@@ -709,8 +681,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     Navigator.of(context).push(MaterialPageRoute(builder: (context) => OrderFormScreen(existingOrder: newQuote)));
   }
 
+  // AGORA USA AWAIT NO PREPARE
   void _registerPickup() async {
-      final selectionItems = _prepareSelectionItems();
+      // 1. Aguarda o cálculo de disponibilidade e PESOS
+      final selectionItems = await _prepareSelectionItems();
 
       if (selectionItems.isEmpty) {
           _showSnackBar('Não há itens em estoque prontos para retirada deste pedido.', isError: true);
@@ -783,8 +757,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       }
   }
 
+  // AGORA USA AWAIT NO PREPARE
   void _showDeliveryDialog() async {
-      final selectionItems = _prepareSelectionItems();
+      // 1. Aguarda o cálculo de disponibilidade e PESOS
+      final selectionItems = await _prepareSelectionItems();
 
       if (selectionItems.isEmpty) {
           _showSnackBar('Não há itens em estoque prontos para entrega deste pedido.', isError: true);
@@ -942,7 +918,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               children: [
                 _buildClientInfoSection(needsRefund: needsRefund, refundAmountString: refundAmountString),
                 const SizedBox(height: 24), 
-                _buildItemsSection(), // <--- CORRIGIDA AQUI
+                _buildItemsSection(), 
                 const Divider(), 
                 _buildTotalsSection(), 
                 _buildPaymentDistributionSection(), 
@@ -958,9 +934,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
 
-  // =================================================================
-  // FUNÇÃO RESTAURADA QUE FALTAVA
-  // =================================================================
+  // ... (WIDGETS buildClientInfoSection, buildItemsSection, buildTotalsSection, etc... MANTENHA IGUAL AO ANTERIOR OU COPIE SE NECESSÁRIO, POIS NÃO MUDARAM LOGICAMENTE)
+  // Como você pediu o arquivo completo, vou manter os métodos auxiliares aqui para garantir:
+
   Widget _buildClientInfoSection({required bool needsRefund, String? refundAmountString}) {
     final dateFormatter = DateFormat('dd/MM/yyyy HH:mm');
     final dateToShow = _recalculatedDeliveryDate ?? _currentOrder.deliveryDate?.toDate();
@@ -1074,10 +1050,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               }
             }
           }
-          // Garante que não mostre negativo (não deveria acontecer, mas é segurança)
           deliveredCount = max(0, deliveredCount);
 
           final inStockCount = max(0, producedCount - deliveredCount);
+          
+          // Cálculo do Peso Visual
+          final unitWeight = _productWeights[orderItem.productId] ?? 0.0;
+          final totalItemWeight = unitWeight * orderItem.quantity;
 
           return ListTile(
             contentPadding: EdgeInsets.zero,
@@ -1087,6 +1066,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               children: [
                 Text('SKU: ${orderItem.sku}'),
                 Text('${orderItem.quantity} x ${currencyFormatter.format(orderItem.finalUnitPrice)}'),
+                // AQUI APARECE O PESO
+                if (unitWeight > 0)
+                   Text('Peso Unit: ${unitWeight}kg | Total: ${totalItemWeight}kg', style: TextStyle(color: Colors.blue.shade800, fontWeight: FontWeight.bold)),
+                
                 Text('Produzidos: $producedCount de ${orderItem.quantity}'),
                 Text('Entregues/Retirados: $deliveredCount de ${orderItem.quantity}'),
                 if (inStockCount > 0)
@@ -1108,8 +1091,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       ]
     );
   }
-  
-  // ... (MANTENHA OS OUTROS WIDGETS E MÉTODOS IGUAIS)
   Widget _buildTotalsSection() {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final theme = Theme.of(context);
@@ -1309,16 +1290,10 @@ class _AllocationDialogState extends State<_AllocationDialog> {
     _calculateNeeded();
   }
 
-  // Filtra quais fontes de estoque podem ser mostradas (remove Finalizados/Cancelados)
   void _filterValidSources() {
     _validSourceKeys = widget.groupedStock.keys.where((orderId) {
-      // Estoque Geral sempre aparece
       if (orderId == 'general') return true;
-
-      // Busca o pedido na lista
       final order = widget.allOrders.firstWhereOrNull((o) => o.id == orderId);
-      
-      // Se não achar o pedido ou se ele já estiver Finalizado/Cancelado, esconde
       if (order == null) return false;
       if (order.status == OrderStatus.finalizado || order.status == OrderStatus.cancelado) {
         return false;
@@ -1326,14 +1301,12 @@ class _AllocationDialogState extends State<_AllocationDialog> {
       return true;
     }).toList();
 
-    // Ordena: Geral primeiro, depois alfabético
     _validSourceKeys.sort((a, b) {
       if (a == 'general') return -1;
       if (b == 'general') return 1;
       return a.compareTo(b);
     });
 
-    // Marca todos os válidos como selecionados por padrão
     for (var key in _validSourceKeys) {
       _sourceSelection[key] = true;
     }
@@ -1352,7 +1325,6 @@ class _AllocationDialogState extends State<_AllocationDialog> {
     for(final sourceKey in _validSourceKeys) {
       if (_sourceSelection[sourceKey] == true) {
         final sortedItems = List<StockItem>.from(widget.groupedStock[sourceKey]!);
-        // Pega os itens mais antigos primeiro (FIFO)
         sortedItems.sort((a, b) => (a.deliveryDeadline ?? a.creationDate).compareTo(b.deliveryDeadline ?? b.creationDate));
 
         for (final item in sortedItems) {
@@ -1369,15 +1341,13 @@ class _AllocationDialogState extends State<_AllocationDialog> {
 
   @override
   Widget build(BuildContext context) {
-    // Se após filtrar não sobrar nenhuma fonte de estoque válida (ex: só tinha estoque de pedido finalizado)
-    // O usuário deve ser forçado a produzir do zero ou cancelar.
     if (_validSourceKeys.isEmpty) {
       return AlertDialog(
         title: const Text('Sem estoque disponível para realocação'),
         content: const Text('Não há itens disponíveis no Estoque Geral ou em Pedidos Abertos para cobrir esta necessidade.'),
         actions: [
           TextButton(
-             onPressed: () => Navigator.of(context).pop(<StockItem>[]), // Retorna lista vazia = Produzir do Zero
+             onPressed: () => Navigator.of(context).pop(<StockItem>[]), 
              child: const Text('Produzir Tudo do Zero'),
           ),
         ],
@@ -1396,7 +1366,6 @@ class _AllocationDialogState extends State<_AllocationDialog> {
               const Text('Selecione as fontes de estoque que deseja usar:'),
               const SizedBox(height: 8),
               
-              // Usa a lista filtrada _validSourceKeys
               ..._validSourceKeys.map((orderId) {
                 final items = widget.groupedStock[orderId]!;
                 final order = orderId == 'general' 

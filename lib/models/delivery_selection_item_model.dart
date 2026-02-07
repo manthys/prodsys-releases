@@ -1,5 +1,3 @@
-// lib/models/delivery_selection_item_model.dart
-
 class DeliverySelectionItem {
   final String productId;
   final String sku;
@@ -7,6 +5,7 @@ class DeliverySelectionItem {
   final String? logoType;
   final int maxQuantity;
   int quantityToDeliver;
+  final double unitWeight; // NOVO: Peso unitário herdado da forma
 
   DeliverySelectionItem({
     required this.productId,
@@ -15,5 +14,6 @@ class DeliverySelectionItem {
     this.logoType,
     required this.maxQuantity,
     this.quantityToDeliver = 0,
+    this.unitWeight = 0.0,
   });
 }

@@ -9,8 +9,12 @@ import '../models/order_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
 import '../models/delivery_model.dart';
+// Import necessário para buscar os pesos no banco
+import '../services/firestore_service.dart';
 
 class DeliveryPdfService {
+  final FirestoreService _firestoreService = FirestoreService();
+
   Future<void> generateAndShowPdf(Delivery delivery, Order order, Client client, CompanySettings company) async {
     final pdf = pw.Document();
 
@@ -21,6 +25,28 @@ class DeliveryPdfService {
       logoImage = null;
     }
 
+    // --- CÁLCULO DE PESOS (NOVO) ---
+    // Busca formas e produtos para cruzar os dados de peso
+    final molds = await _firestoreService.getMoldsStream().first;
+    final products = await _firestoreService.getProductsStream().first;
+    
+    // Cria mapa: Nome da Forma -> Peso
+    final moldWeights = {for (var m in molds) m.name: m.weight};
+    
+    // Cria mapa: ID do Produto -> Peso Unitário
+    final productWeights = <String, double>{};
+    for (var p in products) {
+       productWeights[p.id!] = moldWeights[p.moldType] ?? 0.0;
+    }
+    
+    // Calcula o peso total desta entrega específica
+    double deliveryTotalWeight = 0.0;
+    for(var item in delivery.items) {
+       double weight = productWeights[item.productId] ?? 0.0;
+       deliveryTotalWeight += (item.quantity * weight);
+    }
+    // -------------------------------
+
     final font = await PdfGoogleFonts.robotoRegular();
     final boldFont = await PdfGoogleFonts.robotoBold();
     final theme = pw.ThemeData.withFont(base: font, bold: boldFont);
@@ -30,13 +56,15 @@ class DeliveryPdfService {
         theme: theme,
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(32),
-        header: (pw.Context context) => _buildHeader(company, delivery, logoImage),
+        // Passamos o peso total para o cabeçalho
+        header: (pw.Context context) => _buildHeader(company, delivery, logoImage, deliveryTotalWeight),
         footer: (pw.Context context) => _buildPageFooter(context),
         build: (pw.Context context) {
           return [
             _buildPartyInfoSection(client, order, delivery),
             pw.SizedBox(height: 15),
-            _buildItemsTable(delivery),
+            // Passamos o mapa de pesos para a tabela
+            _buildItemsTable(delivery, productWeights),
             pw.Spacer(),
             _buildSignatureSection(delivery.type),
           ];
@@ -44,11 +72,17 @@ class DeliveryPdfService {
       ),
     );
     
-    await Printing.layoutPdf(onLayout: (PdfPageFormat format) async => pdf.save());
+    // Define o nome do arquivo para facilitar ao salvar
+    final fileName = 'Entrega_${client.name.replaceAll(' ', '_')}_${DateFormat('ddMMyy').format(DateTime.now())}.pdf';
+
+    await Printing.layoutPdf(
+      onLayout: (PdfPageFormat format) async => pdf.save(),
+      name: fileName,
+    );
   }
 
-  pw.Widget _buildHeader(CompanySettings company, Delivery delivery, pw.MemoryImage? logo) {
-    // TÍTULO DINÂMICO
+  // Header atualizado com Peso Total
+  pw.Widget _buildHeader(CompanySettings company, Delivery delivery, pw.MemoryImage? logo, double totalWeight) {
     final String title = delivery.type == DeliveryType.devolucao 
         ? 'COMPROVANTE DE DEVOLUÇÃO' 
         : 'NOTA DE ENTREGA';
@@ -78,6 +112,10 @@ class DeliveryPdfService {
           children: [
             pw.Text(title, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 14, color: delivery.type == DeliveryType.devolucao ? PdfColors.red : PdfColors.black)),
             pw.Text('Data: ${DateFormat('dd/MM/yyyy HH:mm').format(delivery.deliveryDate.toDate())}', style: const pw.TextStyle(fontSize: 9)), 
+            
+            // AQUI ESTÁ A INFORMAÇÃO DO PESO TOTAL NO CABEÇALHO
+            if (totalWeight > 0)
+               pw.Text('Carga Total: ${totalWeight.toStringAsFixed(1)} kg', style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold, color: PdfColors.blue900)),
           ]
         )
       ]
@@ -164,36 +202,39 @@ class DeliveryPdfService {
       )
     );
   }
-  
-  // =================================================================
-  // TABELA ADAPTATIVA
-  // =================================================================
-  pw.Widget _buildItemsTable(Delivery delivery) {
+
+  // Tabela atualizada com a coluna de Peso Unitário e Total por linha
+  pw.Widget _buildItemsTable(Delivery delivery, Map<String, double> productWeights) {
     final isReturn = delivery.type == DeliveryType.devolucao;
     
-    // Lista de colunas varia com o tipo de documento
+    // Adicionada coluna "Peso (kg)"
     final List<String> headers = isReturn 
-        ? ['N.', 'SKU', 'Qtd Devolvida', 'Item', 'Motivo da Devolução']
-        : ['N.', 'SKU', 'Qtd.', 'Item', 'Env.', 'Dev.', 'Ent.', 'Motivo/Obs'];
+        ? ['N.', 'SKU', 'Qtd Devolvida', 'Peso (kg)', 'Item', 'Motivo da Devolução']
+        : ['N.', 'SKU', 'Qtd.', 'Peso (kg)', 'Item', 'Env.', 'Dev.', 'Ent.', 'Motivo/Obs'];
 
-    // Se for Saída (Normal), verificamos se houve recusa parcial para exibir colunas extras
     bool hasImmediateRefusal = !isReturn && delivery.items.any((i) => i.returnQuantity > 0);
     
-    // Se for saída limpa, voltamos para colunas simples
     final List<String> finalHeaders = (isReturn || hasImmediateRefusal) 
         ? headers 
-        : ['N.', 'SKU', 'Qtd.', 'Item']; 
+        : ['N.', 'SKU', 'Qtd.', 'Peso (kg)', 'Item']; 
 
     final data = delivery.items.asMap().entries.map((entry) {
       final index = entry.key + 1;
       final item = entry.value;
       
+      // Busca o peso unitário
+      final weight = productWeights[item.productId] ?? 0.0;
+      // Calcula o peso da linha (Peso Unit * Quantidade)
+      final totalRowWeight = weight * item.quantity;
+      final weightStr = weight > 0 ? '${totalRowWeight.toStringAsFixed(1)}' : '-';
+
       if (isReturn) {
         // Documento de DEVOLUÇÃO
         return [
           index.toString(),
           item.sku,
           item.quantity.toString(), // Na devolução, quantity é o que voltou
+          weightStr,
           item.productName,
           item.returnReason?.replaceAll(' | ', '\n') ?? '-'
         ];
@@ -203,7 +244,8 @@ class DeliveryPdfService {
         return [
           index.toString(),
           item.sku,
-          '-', // Coluna Qtd Geral fica vazia, usamos Env/Dev/Ent
+          '-', // Coluna Qtd Geral fica vazia
+          weightStr,
           item.productName,
           item.quantity.toString(),
           item.returnQuantity > 0 ? item.returnQuantity.toString() : '-',
@@ -212,49 +254,59 @@ class DeliveryPdfService {
         ];
       } else {
         // Documento de SAÍDA Limpa (Padrão)
-        // Corrigido: Qtd antes do Item
         return [
           index.toString(),
           item.sku,
           '${item.quantity} Un.',
+          weightStr,
           item.productName,
         ];
       }
     }).toList();
     
-    // Definição das larguras das colunas
+    // Definição das larguras das colunas (Ajustado para caber o Peso)
     Map<int, pw.TableColumnWidth> columnWidths;
     Map<int, pw.Alignment> cellAlignments;
 
     if (isReturn) {
         columnWidths = {
-            0: const pw.FixedColumnWidth(20), 1: const pw.FixedColumnWidth(50), 2: const pw.FixedColumnWidth(60),
-            3: const pw.FlexColumnWidth(2), 4: const pw.FlexColumnWidth(1.5)
+            0: const pw.FixedColumnWidth(20), 
+            1: const pw.FixedColumnWidth(50), 
+            2: const pw.FixedColumnWidth(60),
+            3: const pw.FixedColumnWidth(40), // Peso
+            4: const pw.FlexColumnWidth(2), 
+            5: const pw.FlexColumnWidth(1.5)
         };
         cellAlignments = {
             0: pw.Alignment.center, 1: pw.Alignment.centerLeft, 2: pw.Alignment.center,
-            3: pw.Alignment.centerLeft, 4: pw.Alignment.centerLeft
+            3: pw.Alignment.center, 4: pw.Alignment.centerLeft, 5: pw.Alignment.centerLeft
         };
     } else if (hasImmediateRefusal) {
         columnWidths = {
-            0: const pw.FixedColumnWidth(20), 1: const pw.FixedColumnWidth(50), 2: const pw.FixedColumnWidth(30), 
-            3: const pw.FlexColumnWidth(2), 4: const pw.FixedColumnWidth(25), 5: const pw.FixedColumnWidth(25), 
-            6: const pw.FixedColumnWidth(25), 7: const pw.FlexColumnWidth(1.5)
+            0: const pw.FixedColumnWidth(20), 1: const pw.FixedColumnWidth(50), 2: const pw.FixedColumnWidth(25), 
+            3: const pw.FixedColumnWidth(35), // Peso
+            4: const pw.FlexColumnWidth(2), 
+            5: const pw.FixedColumnWidth(25), 
+            6: const pw.FixedColumnWidth(25), 
+            7: const pw.FixedColumnWidth(25), 
+            8: const pw.FlexColumnWidth(1.5)
         };
         cellAlignments = {
             0: pw.Alignment.center, 1: pw.Alignment.centerLeft, 2: pw.Alignment.center,
-            3: pw.Alignment.centerLeft, 4: pw.Alignment.center, 5: pw.Alignment.center, 6: pw.Alignment.center, 7: pw.Alignment.centerLeft
+            3: pw.Alignment.center, 4: pw.Alignment.centerLeft, 5: pw.Alignment.center, 
+            6: pw.Alignment.center, 7: pw.Alignment.center, 8: pw.Alignment.centerLeft
         };
     } else {
         // Padrão
         columnWidths = {
             0: const pw.FixedColumnWidth(25), 
             1: const pw.FlexColumnWidth(1.5), 
-            2: const pw.FixedColumnWidth(50), 
-            3: const pw.FlexColumnWidth(3.0)  
+            2: const pw.FixedColumnWidth(40), // Qtd
+            3: const pw.FixedColumnWidth(50), // Peso
+            4: const pw.FlexColumnWidth(3.0)  
         };
         cellAlignments = {
-            0: pw.Alignment.center, 1: pw.Alignment.centerLeft, 2: pw.Alignment.center, 3: pw.Alignment.centerLeft
+            0: pw.Alignment.center, 1: pw.Alignment.centerLeft, 2: pw.Alignment.center, 3: pw.Alignment.center, 4: pw.Alignment.centerLeft
         };
     }
 

@@ -7,12 +7,12 @@ import '../models/delivery_selection_item_model.dart';
 
 class PickupDialog extends StatefulWidget {
   final Order order;
-  final List<DeliverySelectionItem> itemsReadyForPickup; // TIPO CORRIGIDO AQUI
+  final List<DeliverySelectionItem> itemsReadyForPickup;
 
   const PickupDialog({
     super.key,
     required this.order,
-    required this.itemsReadyForPickup, // TIPO CORRIGIDO AQUI
+    required this.itemsReadyForPickup,
   });
 
   @override
@@ -28,8 +28,12 @@ class _PickupDialogState extends State<PickupDialog> {
   @override
   void initState() {
     super.initState();
-    // Apenas copiamos a lista que já vem pronta
     _selectionItems = List.from(widget.itemsReadyForPickup);
+  }
+
+  // CÁLCULO DO PESO
+  double get _totalWeight {
+    return _selectionItems.fold(0.0, (sum, item) => sum + (item.quantityToDeliver * item.unitWeight));
   }
 
   void _submit() {
@@ -78,6 +82,25 @@ class _PickupDialogState extends State<PickupDialog> {
                   decoration: const InputDecoration(labelText: 'Placa do Veículo (Opcional)'),
                 ),
                 const Divider(height: 24),
+                
+                // BARRA DE PESO (IGUAL AO DELIVERY DIALOG)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.blue.shade100),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Peso Total da Retirada:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      Text('${_totalWeight.toStringAsFixed(1)} kg', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blue)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
                 const Text('Selecione a quantidade de cada item que está sendo retirado:'),
                 const SizedBox(height: 16),
                 ..._selectionItems.map((item) {
@@ -91,7 +114,7 @@ class _PickupDialogState extends State<PickupDialog> {
                             children: [
                               Text(item.productName, style: const TextStyle(fontWeight: FontWeight.bold)),
                               Text('SKU: ${item.sku} | Logo: ${item.logoType}', style: Theme.of(context).textTheme.bodySmall),
-                              Text('Disponível p/ Retirada: ${item.maxQuantity}', style: const TextStyle(color: Colors.green, fontSize: 12)),
+                              Text('Disp: ${item.maxQuantity} | Peso un: ${item.unitWeight}kg', style: const TextStyle(color: Colors.green, fontSize: 12)),
                             ],
                           ),
                         ),
@@ -104,8 +127,11 @@ class _PickupDialogState extends State<PickupDialog> {
                             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                             decoration: const InputDecoration(labelText: 'Qtd'),
                             textAlign: TextAlign.center,
-                            onSaved: (value) {
-                              item.quantityToDeliver = int.tryParse(value ?? '0') ?? 0;
+                            onChanged: (value) {
+                                final qty = int.tryParse(value) ?? 0;
+                                setState(() {
+                                  item.quantityToDeliver = qty;
+                                });
                             },
                             validator: (value) {
                               if (value == null || value.isEmpty) return 'Req.';

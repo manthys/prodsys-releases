@@ -6,12 +6,12 @@ import '../models/delivery_selection_item_model.dart';
 
 class DeliveryDialog extends StatefulWidget {
   final Order order;
-  final List<DeliverySelectionItem> itemsReadyForDelivery; // TIPO CORRIGIDO AQUI
+  final List<DeliverySelectionItem> itemsReadyForDelivery;
 
   const DeliveryDialog({
     super.key,
     required this.order,
-    required this.itemsReadyForDelivery, // TIPO CORRIGIDO AQUI
+    required this.itemsReadyForDelivery,
   });
 
   @override
@@ -28,8 +28,11 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
   @override
   void initState() {
     super.initState();
-    // Agora apenas copiamos a lista, não precisamos mais inicializar/converter
     _selectionItems = List.from(widget.itemsReadyForDelivery);
+  }
+
+  double get _totalWeight {
+    return _selectionItems.fold(0.0, (sum, item) => sum + (item.quantityToDeliver * item.unitWeight));
   }
 
   void _submit() {
@@ -77,6 +80,25 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
                   decoration: const InputDecoration(labelText: 'Placa do Veículo (Opcional)'),
                 ),
                 const Divider(height: 32),
+                
+                // BARRA DE PESO TOTAL
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.blue.shade100),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Peso Total Estimado:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      Text('${_totalWeight.toStringAsFixed(1)} kg', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blue)),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
                 Text('Itens para esta entrega:', style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
                 ..._selectionItems.map((item) {
@@ -92,6 +114,7 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
                               children: [
                                 Text(item.productName, style: const TextStyle(fontWeight: FontWeight.bold)),
                                 Text('SKU: ${item.sku} | Disponível: ${item.maxQuantity}'),
+                                Text('Peso un: ${item.unitWeight} kg', style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
                               ],
                             ),
                           ),
@@ -104,7 +127,9 @@ class _DeliveryDialogState extends State<DeliveryDialog> {
                               decoration: const InputDecoration(labelText: 'Qtd'),
                               onChanged: (value) {
                                 final qty = int.tryParse(value) ?? 0;
-                                item.quantityToDeliver = qty;
+                                setState(() {
+                                  item.quantityToDeliver = qty;
+                                });
                               },
                               validator: (value) {
                                 final qty = int.tryParse(value ?? '') ?? 0;

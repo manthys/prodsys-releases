@@ -8,8 +8,12 @@ import 'package:printing/printing.dart';
 import '../models/order_model.dart';
 import '../models/client_model.dart';
 import '../models/company_settings_model.dart';
+// Import para buscar os pesos
+import '../services/firestore_service.dart';
 
 class PdfService {
+  final FirestoreService _firestoreService = FirestoreService();
+
   Future<void> generateAndShowPdf(Order order, Client client, CompanySettings company) async {
     final pdf = pw.Document();
 
@@ -19,6 +23,17 @@ class PdfService {
     } catch (e) {
       logoImage = null;
     }
+
+    // --- CÁLCULO DE PESOS ---
+    final molds = await _firestoreService.getMoldsStream().first;
+    final products = await _firestoreService.getProductsStream().first;
+    
+    final moldWeights = {for (var m in molds) m.name: m.weight};
+    final productWeights = <String, double>{};
+    for (var p in products) {
+       productWeights[p.id!] = moldWeights[p.moldType] ?? 0.0;
+    }
+    // ------------------------
 
     final font = await PdfGoogleFonts.robotoRegular();
     final boldFont = await PdfGoogleFonts.robotoBold();
@@ -41,8 +56,9 @@ class PdfService {
             pw.SizedBox(height: 10),
             _buildDeliveryAddressSection(order),
             pw.SizedBox(height: 15),
-            _buildItemsTable(order),
-            _buildTotals(order),
+            // Passamos o mapa de pesos
+            _buildItemsTable(order, productWeights),
+            _buildTotals(order, productWeights),
             pw.SizedBox(height: 30),
             _buildFooterInfo(order, company),
           ];
@@ -211,15 +227,29 @@ class PdfService {
     );
   }
 
-  pw.Widget _buildItemsTable(Order order) {
+  // Tabela atualizada com a coluna de Peso
+  pw.Widget _buildItemsTable(Order order, Map<String, double> productWeights) {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
-    final headers = ['N.', 'SKU', 'Item', 'Qtd.', 'Unit. (R\$)', 'Total (R\$)'];
+    
+    // Adicionada coluna "Peso Un."
+    final headers = ['N.', 'SKU', 'Item', 'Qtd.', 'Peso Un.', 'Unit. (R\$)', 'Total (R\$)'];
+    
     final data = order.items.asMap().entries.map((entry) {
       final index = entry.key + 1;
       final item = entry.value;
+      
+      final weight = productWeights[item.productId] ?? 0.0;
+      final totalRowWeight = weight * item.quantity;
+      final weightStr = weight > 0 ? '${totalRowWeight.toStringAsFixed(1)} kg' : '-';
+
       return [
-        index.toString(), item.sku, item.productName, '${item.quantity} Unidades',
-        currencyFormatter.format(item.finalUnitPrice), currencyFormatter.format(item.totalPrice)
+        index.toString(), 
+        item.sku, 
+        item.productName, 
+        '${item.quantity} Un.',
+        weightStr, // Mostra o peso total da linha
+        currencyFormatter.format(item.finalUnitPrice), 
+        currencyFormatter.format(item.totalPrice)
       ];
     }).toList();
     
@@ -230,19 +260,32 @@ class PdfService {
       cellStyle: const pw.TextStyle(fontSize: 9),
       cellAlignments: {
         0: pw.Alignment.center, 1: pw.Alignment.centerLeft, 2: pw.Alignment.centerLeft,
-        3: pw.Alignment.center, 4: pw.Alignment.centerRight, 5: pw.Alignment.centerRight,
+        3: pw.Alignment.center, 4: pw.Alignment.center, 5: pw.Alignment.centerRight, 6: pw.Alignment.centerRight,
       },
       columnWidths: {
-        0: const pw.FlexColumnWidth(0.5), 1: const pw.FlexColumnWidth(1), 2: const pw.FlexColumnWidth(2.5),
-        3: const pw.FlexColumnWidth(1), 4: const pw.FlexColumnWidth(1.2), 5: const pw.FlexColumnWidth(1.2),
+        0: const pw.FlexColumnWidth(0.5), 
+        1: const pw.FlexColumnWidth(1), 
+        2: const pw.FlexColumnWidth(2.5),
+        3: const pw.FlexColumnWidth(0.8), // Qtd
+        4: const pw.FlexColumnWidth(1),   // Peso
+        5: const pw.FlexColumnWidth(1.2), 
+        6: const pw.FlexColumnWidth(1.2),
       },
       headers: headers,
       data: data,
     );
   }
 
-  pw.Widget _buildTotals(Order order) {
+  // Totais atualizados com Peso Total Estimado
+  pw.Widget _buildTotals(Order order, Map<String, double> productWeights) {
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$ ');
+    
+    // Cálculo do peso total
+    double totalWeight = 0.0;
+    for(var item in order.items) {
+      totalWeight += (item.quantity * (productWeights[item.productId] ?? 0.0));
+    }
+
     return pw.Container(
       alignment: pw.Alignment.centerRight,
       margin: const pw.EdgeInsets.only(top: 10),
@@ -251,6 +294,14 @@ class PdfService {
         child: pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
+            // Linha de Peso Total
+            if (totalWeight > 0) ...[
+               pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
+                pw.Text('Peso Total Estimado:'),
+                pw.Text('${totalWeight.toStringAsFixed(1)} kg', style: pw.TextStyle(fontWeight: pw.FontWeight.bold))
+              ]),
+              pw.Divider(color: PdfColors.grey400),
+            ],
             pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
               pw.Text('Subtotal'),
               pw.Text(currencyFormatter.format(order.totalItemsAmount))
@@ -261,7 +312,6 @@ class PdfService {
               pw.Text(currencyFormatter.format(order.shippingCost))
             ]),
             pw.Divider(color: PdfColors.grey400),
-            // ##### LINHAS DO DESCONTO REMOVIDAS DAQUI #####
             pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
               pw.Text('Total', style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),
               pw.Text(currencyFormatter.format(order.finalAmount), style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 10)),

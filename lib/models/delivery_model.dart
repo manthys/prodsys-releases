@@ -3,7 +3,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum DeliveryStatus { emTransito, entregue }
-// NOVO ENUM PARA O TIPO DE MOVIMENTAÇÃO
 enum DeliveryType { saida, devolucao } 
 
 class DeliveryItem {
@@ -12,7 +11,7 @@ class DeliveryItem {
   final String productName;
   final int quantity;
   final String logoType;
-  final int returnQuantity; // Usado na entrega (recusa imediata)
+  final int returnQuantity;
   final String? returnReason;
 
   DeliveryItem({
@@ -48,6 +47,7 @@ class DeliveryItem {
 
 class Delivery {
   final String? id;
+  final String? routeId; // NOVO: Identificador da Rota
   final String orderId;
   final String clientName;
   final Timestamp deliveryDate;
@@ -56,11 +56,11 @@ class Delivery {
   final String vehiclePlate;
   final String createdByUserName;
   final DeliveryStatus status;
-  // NOVO CAMPO
   final DeliveryType type; 
 
   Delivery({
     this.id,
+    this.routeId, // NOVO
     required this.orderId,
     required this.clientName,
     required this.deliveryDate,
@@ -69,12 +69,13 @@ class Delivery {
     this.vehiclePlate = '',
     required this.createdByUserName,
     this.status = DeliveryStatus.emTransito,
-    this.type = DeliveryType.saida, // Padrão é saída
+    this.type = DeliveryType.saida,
   });
 
   Delivery copyWith({String? id}) {
     return Delivery(
       id: id ?? this.id,
+      routeId: routeId,
       orderId: orderId,
       clientName: clientName,
       deliveryDate: deliveryDate,
@@ -88,6 +89,7 @@ class Delivery {
   }
 
   Map<String, dynamic> toJson() => {
+    'routeId': routeId, // Salva o ID da rota
     'orderId': orderId,
     'clientName': clientName,
     'deliveryDate': deliveryDate,
@@ -96,7 +98,7 @@ class Delivery {
     'vehiclePlate': vehiclePlate,
     'createdByUserName': createdByUserName,
     'status': status.name,
-    'type': type.name, // Salva o tipo
+    'type': type.name,
   };
 
   factory Delivery.fromFirestore(Map<String, dynamic> data, String documentId) {
@@ -104,18 +106,18 @@ class Delivery {
     
     return Delivery(
       id: documentId,
-      orderId: data['orderId'],
-      clientName: data['clientName'],
-      deliveryDate: data['deliveryDate'],
+      routeId: data['routeId'], // Lê o ID da rota
+      orderId: data['orderId'] ?? '',
+      clientName: data['clientName'] ?? 'Desconhecido',
+      deliveryDate: data['deliveryDate'] ?? Timestamp.now(),
       items: itemsList,
-      driverName: data['driverName'],
-      vehiclePlate: data['vehiclePlate'],
-      createdByUserName: data['createdByUserName'],
+      driverName: data['driverName'] ?? '',
+      vehiclePlate: data['vehiclePlate'] ?? '',
+      createdByUserName: data['createdByUserName'] ?? '',
       status: DeliveryStatus.values.firstWhere(
         (e) => e.name == data['status'],
         orElse: () => DeliveryStatus.emTransito,
       ),
-      // Lê o tipo, com fallback para 'saida' para compatibilidade antiga
       type: DeliveryType.values.firstWhere(
         (e) => e.name == (data['type'] ?? 'saida'),
         orElse: () => DeliveryType.saida,

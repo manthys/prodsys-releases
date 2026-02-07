@@ -26,6 +26,7 @@ import 'molds_screen.dart';
 import 'stock_screen.dart';
 import 'manage_users_screen.dart';
 import 'order_form_screen.dart';
+import 'delivery_route_screen.dart'; // Tela Principal de Logística
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -40,12 +41,31 @@ class _MainScreenState extends State<MainScreen> {
   String _userRole = 'employee';
   bool _isLoadingRole = true;
 
-  // LISTAS DE TÍTULOS E DESTINOS (Podem ser const)
-  final List<String> _adminTitles = const ['Dashboard', 'Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos', 'Gerenciar Formas', 'Controle de Gastos', 'Gerenciar Usuários', 'Configurações da Empresa'];
-  final List<NavigationRailDestination> _adminDestinations = const [NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Dashboard')), NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos')), NavigationRailDestination(icon: Icon(Icons.handyman_outlined), selectedIcon: Icon(Icons.handyman), label: Text('Formas')), NavigationRailDestination(icon: Icon(Icons.money_off_outlined), selectedIcon: Icon(Icons.money_off), label: Text('Gastos')), NavigationRailDestination(icon: Icon(Icons.manage_accounts_outlined), selectedIcon: Icon(Icons.manage_accounts), label: Text('Usuários')), NavigationRailDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: Text('Ajustes'))];
+  // LISTAS DE TÍTULOS E DESTINOS
+  final List<String> _adminTitles = const ['Dashboard', 'Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos', 'Gerenciar Formas', 'Logística e Rotas', 'Controle de Gastos', 'Gerenciar Usuários', 'Configurações da Empresa'];
+  final List<NavigationRailDestination> _adminDestinations = const [
+    NavigationRailDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: Text('Dashboard')), 
+    NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), 
+    NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), 
+    NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), 
+    NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), 
+    NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos')), 
+    NavigationRailDestination(icon: Icon(Icons.handyman_outlined), selectedIcon: Icon(Icons.handyman), label: Text('Formas')), 
+    NavigationRailDestination(icon: Icon(Icons.local_shipping_outlined), selectedIcon: Icon(Icons.local_shipping), label: Text('Logística')), 
+    NavigationRailDestination(icon: Icon(Icons.money_off_outlined), selectedIcon: Icon(Icons.money_off), label: Text('Gastos')), 
+    NavigationRailDestination(icon: Icon(Icons.manage_accounts_outlined), selectedIcon: Icon(Icons.manage_accounts), label: Text('Usuários')), 
+    NavigationRailDestination(icon: Icon(Icons.settings_outlined), selectedIcon: Icon(Icons.settings), label: Text('Ajustes'))
+  ];
   
-  final List<String> _employeeTitles = const ['Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos'];
-  final List<NavigationRailDestination> _employeeDestinations = const [NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos'))];
+  final List<String> _employeeTitles = const ['Cotações e Pedidos', 'Produção Diária', 'Controle de Estoque', 'Clientes', 'Catálogo de Produtos', 'Logística e Rotas'];
+  final List<NavigationRailDestination> _employeeDestinations = const [
+    NavigationRailDestination(icon: Icon(Icons.receipt_long_outlined), selectedIcon: Icon(Icons.receipt_long), label: Text('Pedidos')), 
+    NavigationRailDestination(icon: Icon(Icons.precision_manufacturing_outlined), selectedIcon: Icon(Icons.precision_manufacturing), label: Text('Produção')), 
+    NavigationRailDestination(icon: Icon(Icons.inventory_outlined), selectedIcon: Icon(Icons.inventory), label: Text('Estoque')), 
+    NavigationRailDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: Text('Clientes')), 
+    NavigationRailDestination(icon: Icon(Icons.style_outlined), selectedIcon: Icon(Icons.style), label: Text('Produtos')),
+    NavigationRailDestination(icon: Icon(Icons.local_shipping_outlined), selectedIcon: Icon(Icons.local_shipping), label: Text('Logística')), 
+  ];
 
   @override
   void initState() {
@@ -109,7 +129,6 @@ class _MainScreenState extends State<MainScreen> {
     String? tooltip;
     VoidCallback? onPressed;
     
-    // Verificação de segurança de índice
     final maxIndex = isAdmin ? _adminTitles.length : _employeeTitles.length;
     if (_selectedIndex >= maxIndex) {
       _selectedIndex = 0; 
@@ -131,6 +150,13 @@ class _MainScreenState extends State<MainScreen> {
       case 'Gerenciar Formas': if (isAdmin) { tooltip = 'Adicionar Forma'; onPressed = () async { final result = await showDialog<Mold>(context: fabContext, builder: (_) => const MoldDialog()); if (result != null && mounted) await _firestoreService.addMold(result); }; } break;
       case 'Controle de Gastos': if (isAdmin) { tooltip = 'Nova Despesa'; onPressed = () async { final result = await showDialog<Expense>(context: fabContext, builder: (_) => const ExpenseDialog()); if (result != null && mounted) await _firestoreService.addExpense(result); }; } break;
       case 'Gerenciar Usuários': if (isAdmin) { tooltip = 'Novo Funcionário'; onPressed = () async { final result = await showDialog<bool>(context: fabContext, builder: (_) => const UserDialog()); if (result == true && mounted) { ScaffoldMessenger.of(fabContext).showSnackBar(const SnackBar(content: Text('Funcionário criado com sucesso!'), backgroundColor: Colors.green)); } }; } break;
+      
+      // Logística: Agora o FAB apenas abre o modal de Veículos se quiser, 
+      // mas a criação de rota é feita dentro da tela mesmo.
+      case 'Logística e Rotas':
+        // Deixei null para não ter botão flutuante aqui, já que a tela tem abas.
+        // Se quiser um botão rápido, me avise.
+        break;
     }
 
     if (onPressed != null) {
@@ -143,16 +169,16 @@ class _MainScreenState extends State<MainScreen> {
   Widget build(BuildContext context) {
     final bool isAdmin = _userRole == 'admin';
     
-    // LISTAS DE TELAS (NÃO CONSTANTES - MOVIDAS PARA O BUILD)
-    // Precisam ser criadas aqui para acessar _userRole atualizado
     final List<Widget> adminScreens = [
         const DashboardScreen(), 
         const OrdersScreen(), 
         const ProductionScreen(), 
         const StockScreen(), 
         const ClientsScreen(), 
-        ProductsScreen(userRole: _userRole), // <--- AQUI A CORREÇÃO (Passando userRole)
+        ProductsScreen(userRole: _userRole), 
         const MoldsScreen(), 
+        // CORREÇÃO: Índice 7 agora aponta para DeliveryRouteScreen (Logística Central)
+        const DeliveryRouteScreen(), 
         const ExpensesScreen(), 
         const ManageUsersScreen(), 
         const SettingsScreen()
@@ -163,7 +189,9 @@ class _MainScreenState extends State<MainScreen> {
         const ProductionScreen(), 
         const StockScreen(), 
         const ClientsScreen(), 
-        ProductsScreen(userRole: _userRole) // <--- AQUI A CORREÇÃO
+        ProductsScreen(userRole: _userRole),
+        // CORREÇÃO: Índice 5 agora aponta para DeliveryRouteScreen
+        const DeliveryRouteScreen(), 
     ];
 
     final screens = isAdmin ? adminScreens : employeeScreens;

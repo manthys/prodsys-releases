@@ -20,6 +20,7 @@ import '../models/mold_model.dart';
 import '../models/payment_distribution_model.dart';
 import '../models/stock_item_model.dart';
 import '../models/delivery_model.dart';
+import '../models/vehicle_model.dart';
 
 class GroupedStockResult {
   final Map<String, List<StockItem>> stockByOrderId;
@@ -1005,5 +1006,93 @@ class FirestoreService {
     if (count > 0) {
       await batch.commit();
     }
+  }
+
+  // --- MÉTODOS VEÍCULOS E ROTAS ---
+  
+  Stream<List<Vehicle>> getVehiclesStream() => _db.collection('vehicles').orderBy('name').snapshots().map((snapshot) => snapshot.docs.map((doc) => Vehicle.fromFirestore(doc.data(), doc.id)).toList());
+  Future<void> addVehicle(Vehicle vehicle) => _db.collection('vehicles').add(vehicle.toJson());
+  Future<void> updateVehicle(Vehicle vehicle) => _db.collection('vehicles').doc(vehicle.id).update(vehicle.toJson());
+  Future<void> deleteVehicle(String vehicleId) => _db.collection('vehicles').doc(vehicleId).delete();
+
+  Future<Map<String, double>> getMoldWeightsMap() async {
+    final snapshot = await _db.collection('molds').get();
+    final Map<String, double> weights = {};
+    for (var doc in snapshot.docs) {
+      final data = doc.data();
+      weights[data['name']] = (data['weight'] as num?)?.toDouble() ?? 0.0;
+    }
+    return weights;
+  }
+
+  // CORREÇÃO AQUI: Removemos o filtro de routeId do banco para evitar erro de índice
+  Stream<List<Delivery>> getRoutesStream() {
+    final dateLimit = DateTime.now().subtract(const Duration(days: 30));
+    
+    return _db.collection('deliveries')
+        .where('deliveryDate', isGreaterThan: Timestamp.fromDate(dateLimit))
+        .orderBy('deliveryDate', descending: true)
+        .snapshots()
+        .map((snapshot) {
+          final allDeliveries = snapshot.docs.map((doc) => Delivery.fromFirestore(doc.data(), doc.id)).toList();
+          // Filtra na memória apenas as que têm routeId (são rotas)
+          return allDeliveries.where((d) => d.routeId != null && d.routeId!.isNotEmpty).toList();
+        });
+  }
+
+  Future<List<Delivery>> registerRouteDeliveries(List<Delivery> deliveries) async {
+    final batch = _db.batch();
+    // Gera um ID único para esta rota
+    final String generatedRouteId = '${DateTime.now().millisecondsSinceEpoch}_${deliveries.first.driverName.replaceAll(' ', '')}';
+    List<Delivery> createdDeliveries = [];
+
+    for (var delivery in deliveries) {
+      final deliveryRef = _db.collection('deliveries').doc();
+      
+      var deliveryWithRoute = Delivery(
+        id: deliveryRef.id,
+        routeId: generatedRouteId, // Vincula à rota
+        orderId: delivery.orderId,
+        clientName: delivery.clientName,
+        deliveryDate: delivery.deliveryDate,
+        items: delivery.items,
+        driverName: delivery.driverName,
+        vehiclePlate: delivery.vehiclePlate,
+        createdByUserName: delivery.createdByUserName,
+        status: DeliveryStatus.emTransito,
+      );
+      
+      createdDeliveries.add(deliveryWithRoute);
+      batch.set(deliveryRef, deliveryWithRoute.toJson());
+
+      // Atualiza estoque
+      final stockItemsQuery = await _db.collection('stock_items')
+          .where('orderId', isEqualTo: delivery.orderId)
+          .where('status', isEqualTo: StockItemStatus.emEstoque.name)
+          .get();
+      
+      final availableItems = stockItemsQuery.docs.map((d) => StockItem.fromFirestore(d.data(), d.id)).toList();
+
+      for (var itemDeliver in delivery.items) {
+        var itemsToUpdate = availableItems.where((s) => 
+            s.productId == itemDeliver.productId && 
+            s.logoType == itemDeliver.logoType
+        ).take(itemDeliver.quantity).toList();
+
+        for (var stockItem in itemsToUpdate) {
+           batch.update(_db.collection('stock_items').doc(stockItem.id), {
+             'status': StockItemStatus.emTransito.name,
+             'deliveryId': deliveryRef.id
+           });
+           availableItems.remove(stockItem); 
+        }
+      }
+    }
+    
+    await batch.commit();
+    for(var d in deliveries) {
+      await checkIfOrderIsFullyCompleted(d.orderId);
+    }
+    return createdDeliveries;
   }
 }
