@@ -21,6 +21,7 @@ import '../models/payment_distribution_model.dart';
 import '../models/stock_item_model.dart';
 import '../models/delivery_model.dart';
 import '../models/vehicle_model.dart';
+import '../models/payment_account_model.dart';
 
 class GroupedStockResult {
   final Map<String, List<StockItem>> stockByOrderId;
@@ -1094,5 +1095,32 @@ class FirestoreService {
       await checkIfOrderIsFullyCompleted(d.orderId);
     }
     return createdDeliveries;
+  }
+  // --- CONTROLE DE CONTAS DE RECEBIMENTO ---
+
+  // Stream para a tela de configurações (mostra todas)
+  Stream<List<PaymentAccount>> getPaymentAccountsStream() {
+    return _db.collection('payment_accounts').orderBy('name').snapshots().map((snapshot) {
+      return snapshot.docs.map((doc) => PaymentAccount.fromMap(doc.id, doc.data())).toList();
+    });
+  }
+
+  // Future para a tela de vendas (busca apenas as ativas)
+  Future<List<String>> getActivePaymentAccountNames() async {
+    final snapshot = await _db.collection('payment_accounts').where('isActive', isEqualTo: true).get();
+    return snapshot.docs.map((doc) => doc.data()['name'] as String).toList();
+  }
+
+  Future<void> addPaymentAccount(String name) async {
+    await _db.collection('payment_accounts').add({
+      'name': name,
+      'isActive': true,
+    });
+  }
+
+  Future<void> togglePaymentAccountStatus(String id, bool currentStatus) async {
+    await _db.collection('payment_accounts').doc(id).update({
+      'isActive': !currentStatus,
+    });
   }
 }

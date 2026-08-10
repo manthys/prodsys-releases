@@ -24,7 +24,7 @@ class _PaymentDistributionDialogState extends State<PaymentDistributionDialog> {
   late List<PaymentDistribution> _distributions;
   final List<TextEditingController> _controllers = [];
 
-  final List<String> _recipients = ["Cristiano", "Cleiton", "Osmildo"];
+  final List<String> _recipients = ["Cristiano", "Cleiton", "Osmildo", "Nota"];
 
   @override
   void initState() {

@@ -7,6 +7,7 @@ import 'package:mask_text_input_formatter/mask_text_input_formatter.dart';
 import '../models/address_model.dart';
 import '../models/company_settings_model.dart';
 import '../services/firestore_service.dart';
+import '../widgets/manage_payment_accounts_dialog.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -204,6 +205,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       decoration: const InputDecoration(labelText: 'Dados para Pagamento (Chave PIX, Banco, etc.)', border: OutlineInputBorder(), hintText: 'Ex: PIX (CNPJ): 12.345.678/0001-99\nBanco do Brasil, Ag: 1234, C/C: 56789-0'),
                       maxLines: 4,
                     ),
+                    
+                    const SizedBox(height: 24),
+                    // BOTÃO DE GERENCIAR CONTAS DE RECEBIMENTO
+                    Card(
+                      elevation: 1,
+                      child: ListTile(
+                        leading: const Icon(Icons.account_balance_wallet, color: Colors.blue),
+                        title: const Text('Gerenciar Contas de Recebimento'),
+                        subtitle: const Text('Adicionar, ativar ou desativar Cristiano, Cleiton, Osmildo, Nota...'),
+                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                        onTap: () {
+                          showDialog(
+                            context: context,
+                            builder: (context) => const ManagePaymentAccountsDialog(),
+                          );
+                        },
+                      ),
+                    ),
+
                     const SizedBox(height: 32),
                   ],
                 ),

@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/payment_distribution_model.dart';
+import '../services/firestore_service.dart'; // IMPORT DO SERVIÇO
 import 'currency_input_formatter.dart';
 
 class PaymentDistributionFormPart extends StatefulWidget {
@@ -11,7 +12,6 @@ class PaymentDistributionFormPart extends StatefulWidget {
 
   const PaymentDistributionFormPart({
     super.key,
-    // totalAmount agora é opcional. Se for 0, significa modo de entrada livre.
     this.totalAmount = 0,
     this.initialDistributions = const [],
   });
@@ -23,13 +23,16 @@ class PaymentDistributionFormPart extends StatefulWidget {
 class PaymentDistributionFormPartState extends State<PaymentDistributionFormPart> {
   late List<PaymentDistribution> _distributions;
   final List<TextEditingController> _controllers = [];
-  final List<String> _recipients = ["Cristiano", "Cleiton", "Osmildo"];
+  
+  List<String> _recipients = []; // Agora começa vazia
+  bool _isLoading = true; // Controle de loading
+  
   final _formKey = GlobalKey<FormState>();
 
   @override
   void initState() {
     super.initState();
-    _initializeState();
+    _loadAccountsAndInitialize();
   }
 
   @override
@@ -40,22 +43,42 @@ class PaymentDistributionFormPartState extends State<PaymentDistributionFormPart
     }
   }
 
+  // --- NOVA FUNÇÃO QUE BUSCA AS CONTAS ATIVAS ---
+  Future<void> _loadAccountsAndInitialize() async {
+    final activeAccounts = await FirestoreService().getActivePaymentAccountNames();
+    
+    // Proteção: Se estiver editando um pedido antigo e o nome não estiver mais ativo, 
+    // precisamos adicionar ele na lista temporariamente para o Dropdown não quebrar (Erro de Null value)
+    for (var dist in widget.initialDistributions) {
+      if (!activeAccounts.contains(dist.recipient)) {
+        activeAccounts.add(dist.recipient);
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _recipients = activeAccounts.isEmpty ? ["Padrão"] : activeAccounts;
+        _isLoading = false;
+        _initializeState();
+      });
+    }
+  }
+
   void _initializeState() {
     if (widget.initialDistributions.isNotEmpty) {
       _distributions = widget.initialDistributions.map((d) => d.copyWith()).toList();
     } else {
       _distributions = [
         PaymentDistribution(
-          recipient: _recipients.first,
-          // Se o total for fixo, preenche com ele. Se não, começa com 0.
+          recipient: _recipients.isNotEmpty ? _recipients.first : "Padrão",
           amount: widget.totalAmount > 0 ? widget.totalAmount : 0,
         )
       ];
     }
     _updateControllers();
-    setState(() {});
   }
 
+  // O RESTO DO SEU CÓDIGO PERMANECE IDÊNTICO A PARTIR DAQUI
   void _updateControllers() {
     for (var controller in _controllers) {
       controller.dispose();
@@ -88,7 +111,6 @@ class PaymentDistributionFormPartState extends State<PaymentDistributionFormPart
     if (!_formKey.currentState!.validate()) {
       return null;
     }
-    // Só valida a soma se um total foi fornecido
     if (widget.totalAmount > 0 && (getCurrentTotal() - widget.totalAmount).abs() > 0.01) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('A soma dos valores deve ser igual ao total a ser pago!'), backgroundColor: Colors.red),
@@ -106,7 +128,6 @@ class PaymentDistributionFormPartState extends State<PaymentDistributionFormPart
         ));
       }
     }
-    // Se for modo de entrada livre e nada foi digitado, retorna erro
     if (widget.totalAmount == 0 && result.isEmpty) {
        ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Adicione pelo menos um valor na distribuição.'), backgroundColor: Colors.red),
@@ -132,6 +153,13 @@ class PaymentDistributionFormPartState extends State<PaymentDistributionFormPart
   
   @override
   Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     final currencyFormatter = NumberFormat.currency(locale: 'pt_BR', symbol: 'R\$');
     final currentTotal = getCurrentTotal();
 
